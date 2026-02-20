@@ -14,7 +14,7 @@ import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
 import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import type { Receipt, SaveReceiptBody } from './types'
-import { ArrowLeft, Save } from 'lucide-react'
+import { ArrowLeft, Save, Camera } from 'lucide-react'
 import './index.css'
 
 // ── URL ↔ Page/receiptId ──────────────────────────────────────────────────────
@@ -196,7 +196,15 @@ export default function App() {
         ) : undefined}
         topbarRight={isReview ? (
           <SaveButtonSlot receiptId={receiptId} freshResult={freshResult} />
-        ) : undefined}
+        ) : (
+          <button
+            onClick={() => setUploadOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#03a9f4] text-white text-xs font-semibold rounded-lg hover:bg-[#0290d1] transition-colors shadow-sm shadow-[#03a9f4]/30"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            Scan Receipt
+          </button>
+        )}
       >
         <div key={`${page}-${receiptId}`} className="animate-[fadeUp_200ms_ease-out]">
 

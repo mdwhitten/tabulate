@@ -113,6 +113,8 @@ export function ReviewReceipt({
   const [storeName, setStoreName]       = useState(receipt.store_name ?? '')
   const [cropOpen, setCropOpen]         = useState(false)
   const [imgCacheBust, setImgCacheBust] = useState(0)
+  const [dateError, setDateError]       = useState(false)
+  const dateInputRef = useRef<HTMLInputElement>(null)
 
   // Expose save to topbar via CustomEvent
   const handleSaveRef = useRef<(() => Promise<void>) | null>(null)
@@ -195,6 +197,12 @@ export function ReviewReceipt({
 
   const handleSave = useCallback(async () => {
     if (!onSave) return
+    // Require a date before saving
+    if (!receiptDate) {
+      setDateError(true)
+      dateInputRef.current?.focus()
+      return
+    }
     setSaving(true)
     try {
       await onSave({
@@ -234,6 +242,16 @@ export function ReviewReceipt({
           : undefined
         }
         manualTotal={state.manualTotal}
+        difference={total != null ? total - subtotal - tax : undefined}
+        onAddDifference={!isVerified && verifyStatus === 'warn'
+          ? (diff) => {
+              const rounded = Math.round(Math.abs(diff) * 100) / 100
+              if (rounded >= 0.01) {
+                handleAddItem({ name: 'Adjustment', price: rounded, category: 'Other' })
+              }
+            }
+          : undefined
+        }
       />
 
       {/* Main layout */}
@@ -273,16 +291,22 @@ export function ReviewReceipt({
           </div>
 
           {/* Date row */}
-          <div className="flex items-center gap-2 px-3 sm:px-5 py-2 bg-gray-50 border-b border-gray-100">
-            <CalendarDays className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-            <label className="text-xs text-gray-500 font-mono whitespace-nowrap">Receipt date:</label>
+          <div className={`flex items-center gap-2 px-3 sm:px-5 py-2 border-b ${dateError && !receiptDate ? 'bg-red-50 border-b-red-200' : 'bg-gray-50 border-b-gray-100'}`}>
+            <CalendarDays className={`w-3.5 h-3.5 shrink-0 ${dateError && !receiptDate ? 'text-red-400' : 'text-gray-400'}`} />
+            <label className={`text-xs font-mono whitespace-nowrap ${dateError && !receiptDate ? 'text-red-500' : 'text-gray-500'}`}>
+              Receipt date{!isVerified && <span className="text-red-400">*</span>}:
+            </label>
             <input
+              ref={dateInputRef}
               type="date"
               value={receiptDate}
-              onChange={e => setReceiptDate(e.target.value)}
+              onChange={e => { setReceiptDate(e.target.value); if (e.target.value) setDateError(false) }}
               disabled={isVerified}
-              className="text-sm font-mono bg-transparent border-none outline-none cursor-pointer text-gray-700 hover:text-gray-900 disabled:cursor-default"
+              className={`text-sm font-mono bg-transparent border-none outline-none cursor-pointer hover:text-gray-900 disabled:cursor-default ${dateError && !receiptDate ? 'text-red-500 placeholder:text-red-300' : 'text-gray-700'}`}
             />
+            {dateError && !receiptDate && (
+              <span className="text-xs text-red-500 whitespace-nowrap">Required</span>
+            )}
           </div>
 
           {/* Items table */}

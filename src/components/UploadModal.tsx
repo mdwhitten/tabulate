@@ -1,9 +1,61 @@
-import { useCallback, useRef, useState } from 'react'
-import { Upload, X, Loader2, AlertCircle } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Upload, X, Loader2, AlertCircle, Check, Circle } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useUploadReceipt } from '../hooks/useReceipts'
 import { CropModal } from './CropModal'
 import type { ProcessingResult, CropCorners } from '../api/receipts'
+
+// ── Processing step indicator ─────────────────────────────────────────────────
+
+const PROCESSING_STEPS = [
+  { label: 'Uploading image',    delay: 0 },
+  { label: 'Running OCR',        delay: 1500 },
+  { label: 'Analyzing with AI',  delay: 3500 },
+  { label: 'Categorizing items', delay: 6000 },
+] as const
+
+function ProcessingSteps() {
+  const [activeStep, setActiveStep] = useState(0)
+
+  useEffect(() => {
+    const timers = PROCESSING_STEPS.slice(1).map((step, i) =>
+      setTimeout(() => setActiveStep(i + 1), step.delay),
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [])
+
+  return (
+    <div className="flex flex-col items-start gap-2.5 w-full max-w-[220px]">
+      {PROCESSING_STEPS.map((step, i) => {
+        const isDone   = i < activeStep
+        const isActive = i === activeStep
+        return (
+          <div key={i} className="flex items-center gap-2.5">
+            {isDone ? (
+              <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                <Check className="w-3 h-3 text-emerald-600" />
+              </div>
+            ) : isActive ? (
+              <Loader2 className="w-5 h-5 text-[#03a9f4] animate-spin shrink-0" />
+            ) : (
+              <Circle className="w-5 h-5 text-gray-200 shrink-0" />
+            )}
+            <span
+              className={cn(
+                'text-sm transition-colors duration-300',
+                isDone   && 'text-gray-400',
+                isActive && 'text-gray-800 font-medium',
+                !isDone && !isActive && 'text-gray-300',
+              )}
+            >
+              {step.label}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 interface UploadModalProps {
   onClose: () => void
@@ -99,15 +151,11 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
               dragOver
                 ? 'border-[#03a9f4] bg-[#03a9f4]/5 scale-[1.01]'
                 : 'border-gray-200 hover:border-[#03a9f4]/60 hover:bg-gray-50',
-              isPending && 'pointer-events-none opacity-60',
+              isPending && 'pointer-events-none',
             )}
           >
             {isPending ? (
-              <>
-                <Loader2 className="w-10 h-10 text-[#03a9f4] animate-spin" />
-                <p className="text-sm font-medium text-gray-600">Processing receipt…</p>
-                <p className="text-xs text-gray-400">This may take a few seconds</p>
-              </>
+              <ProcessingSteps />
             ) : (
               <>
                 <div className="w-14 h-14 bg-[#03a9f4]/10 rounded-2xl flex items-center justify-center">

@@ -1,5 +1,6 @@
-import { CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react'
+import { CheckCircle, AlertTriangle, AlertCircle, Plus } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { fmt } from '../lib/utils'
 
 type Status = 'verified' | 'warn' | 'fail'
 
@@ -10,6 +11,10 @@ interface VerifyBarProps {
   /** Only shown in fail state — lets the user enter the total manually */
   onManualTotal?: (value: number) => void
   manualTotal?: number | null
+  /** Shown in warn state — adds a line item for the remaining difference */
+  onAddDifference?: (amount: number) => void
+  /** The difference amount (receipt total minus computed sum) */
+  difference?: number
 }
 
 const config: Record<Status, {
@@ -34,7 +39,7 @@ const config: Record<Status, {
   },
 }
 
-export function VerifyBar({ status, title, detail, onManualTotal, manualTotal }: VerifyBarProps) {
+export function VerifyBar({ status, title, detail, onManualTotal, manualTotal, onAddDifference, difference }: VerifyBarProps) {
   const { border, bg, icon } = config[status]
   return (
     <div className={cn(
@@ -46,6 +51,15 @@ export function VerifyBar({ status, title, detail, onManualTotal, manualTotal }:
         <p className="text-sm font-semibold leading-tight">{title}</p>
         <p className="text-xs text-gray-500 font-mono mt-0.5">{detail}</p>
       </div>
+      {status === 'warn' && onAddDifference && difference != null && Math.abs(difference) >= 0.02 && (
+        <button
+          onClick={() => onAddDifference(difference)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors shrink-0"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add {fmt(Math.abs(difference))} item
+        </button>
+      )}
       {status === 'fail' && onManualTotal && (
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-gray-500 whitespace-nowrap">Enter total:</span>

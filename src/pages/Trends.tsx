@@ -95,13 +95,17 @@ function StackedBarChart({ data, selectedIdx, onSelect }: BarChartProps) {
     })
   }
 
+  // Cap the rendered width so the chart doesn't blow up with few months.
+  // Each column is ~68px in viewBox units; allow ~120px rendered per column with some padding.
+  const maxPx = Math.max(280, n * 120 + 80)
+
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" style={{ maxWidth: maxPx }}>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${svgW} ${svgH}`}
         width="100%"
-        preserveAspectRatio="xMidYMid meet"
+        preserveAspectRatio="xMinYMid meet"
         className="overflow-visible"
         aria-label="Monthly spending stacked bar chart"
         onMouseLeave={() => setTooltip(null)}
