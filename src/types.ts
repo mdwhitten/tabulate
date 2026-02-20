@@ -67,12 +67,21 @@ export interface ItemMapping {
   last_seen: string
 }
 
+export interface NewLineItemBody {
+  name: string
+  price: number
+  category: string
+}
+
 export interface SaveReceiptBody {
   corrections: Record<string, string>
   price_corrections: Record<string, number>
+  name_corrections: Record<string, string>
   manual_total: number | null
   receipt_date: string | null
   store_name: string | null
+  new_items: NewLineItemBody[]
+  deleted_item_ids: number[]
 }
 
 export type Page = 'dashboard' | 'receipts' | 'trends' | 'categories' | 'learned' | 'review'

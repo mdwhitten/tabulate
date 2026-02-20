@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useMonthlyTrends } from '../hooks/useTrends'
 import { catColor, catIcon, fmt, fmtShort } from '../lib/utils'
@@ -34,6 +34,16 @@ function fmtPct(pct: number): string {
   return `${pct > 0 ? '+' : ''}${pct.toFixed(0)}%`
 }
 
+// ── Tooltip ────────────────────────────────────────────────────────────────
+
+interface TooltipInfo {
+  x: number     // viewport px
+  y: number     // viewport px
+  cat: string
+  amount: number
+  month: string
+}
+
 // ── Stacked bar SVG chart ──────────────────────────────────────────────────
 
 interface BarChartProps {
@@ -46,6 +56,9 @@ function StackedBarChart({ data, selectedIdx, onSelect }: BarChartProps) {
   const { months, categories } = data
   const n = months.length
 
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [tooltip, setTooltip] = useState<TooltipInfo | null>(null)
+
   const svgW = PAD_L + n * COL_STRIDE - BAR_GAP + PAD_R
   const svgH = CHART_H
   const barAreaH = svgH - PAD_T - PAD_B
@@ -57,102 +70,139 @@ function StackedBarChart({ data, selectedIdx, onSelect }: BarChartProps) {
   const toY = (val: number) => PAD_T + barAreaH - (val / yMax) * barAreaH
   const yBaseline = toY(0)
 
+  function handleSegmentEnter(
+    e: React.MouseEvent | React.TouchEvent,
+    cat: string,
+    amount: number,
+    month: string
+  ) {
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect) return
+    let clientX: number, clientY: number
+    if ('touches' in e) {
+      clientX = e.touches[0]?.clientX ?? 0
+      clientY = e.touches[0]?.clientY ?? 0
+    } else {
+      clientX = e.clientX
+      clientY = e.clientY
+    }
+    setTooltip({
+      x: clientX - rect.left,
+      y: clientY - rect.top - 8,
+      cat,
+      amount,
+      month,
+    })
+  }
+
   return (
-    <svg
-      viewBox={`0 0 ${svgW} ${svgH}`}
-      width="100%"
-      preserveAspectRatio="xMidYMid meet"
-      className="overflow-visible"
-      aria-label="Monthly spending stacked bar chart"
-    >
-      {Array.from({ length: GRID_LINES }, (_, i) => {
-        const val = gridStep * i
-        const y   = toY(val)
-        return (
-          <g key={i}>
-            <line x1={PAD_L - 6} y1={y} x2={svgW - PAD_R} y2={y}
-              stroke="#e5e7eb" strokeWidth={1} strokeDasharray={i === 0 ? 'none' : '3 3'} />
-            <text x={PAD_L - 10} y={y} textAnchor="end" dominantBaseline="middle"
-              fontSize={10} fill="#9ca3af" fontFamily="ui-monospace, 'JetBrains Mono', monospace">
-              {fmtShort(val)}
-            </text>
-          </g>
-        )
-      })}
+    <div className="relative w-full">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        width="100%"
+        preserveAspectRatio="xMidYMid meet"
+        className="overflow-visible"
+        aria-label="Monthly spending stacked bar chart"
+        onMouseLeave={() => setTooltip(null)}
+      >
+        {Array.from({ length: GRID_LINES }, (_, i) => {
+          const val = gridStep * i
+          const y   = toY(val)
+          return (
+            <g key={i}>
+              <line x1={PAD_L - 6} y1={y} x2={svgW - PAD_R} y2={y}
+                stroke="#e5e7eb" strokeWidth={1} strokeDasharray={i === 0 ? 'none' : '3 3'} />
+              <text x={PAD_L - 10} y={y} textAnchor="end" dominantBaseline="middle"
+                fontSize={10} fill="#9ca3af" fontFamily="ui-monospace, 'JetBrains Mono', monospace">
+                {fmtShort(val)}
+              </text>
+            </g>
+          )
+        })}
 
-      {months.map((month, colIdx) => {
-        const x          = PAD_L + colIdx * COL_STRIDE
-        const isSelected = colIdx === selectedIdx
+        {months.map((month, colIdx) => {
+          const x          = PAD_L + colIdx * COL_STRIDE
+          const isSelected = colIdx === selectedIdx
 
-        let stackY = yBaseline
-        const segments: { cat: string; y: number; h: number }[] = []
+          let stackY = yBaseline
+          const segments: { cat: string; y: number; h: number }[] = []
 
-        for (const cat of categories) {
-          const val = month.by_category[cat] ?? 0
-          if (val <= 0) continue
-          const segH = (val / yMax) * barAreaH
-          stackY    -= segH
-          segments.push({ cat, y: stackY, h: segH })
-        }
+          for (const cat of categories) {
+            const val = month.by_category[cat] ?? 0
+            if (val <= 0) continue
+            const segH = (val / yMax) * barAreaH
+            stackY    -= segH
+            segments.push({ cat, y: stackY, h: segH })
+          }
 
-        return (
-          <g key={colIdx} onClick={() => onSelect(colIdx)} style={{ cursor: 'pointer' }}
-            role="button" aria-label={`${month.month_label}: ${fmt(month.total)}`}
-            aria-pressed={isSelected}>
+          return (
+            <g key={colIdx} onClick={() => onSelect(colIdx)} style={{ cursor: 'pointer' }}
+              role="button" aria-label={`${month.month_label}: ${fmt(month.total)}`}
+              aria-pressed={isSelected}>
 
-            {isSelected && (
-              <rect x={x - 8} y={PAD_T} width={BAR_WIDTH + 16} height={barAreaH}
-                fill="#03a9f4" opacity={0.06} rx={6} />
-            )}
+              {isSelected && (
+                <rect x={x - 8} y={PAD_T} width={BAR_WIDTH + 16} height={barAreaH}
+                  fill="#03a9f4" opacity={0.06} rx={6} />
+              )}
 
-            <rect x={x - 8} y={PAD_T} width={BAR_WIDTH + 16} height={barAreaH + PAD_B} fill="transparent" />
+              {/* Invisible hit area for whole column */}
+              <rect x={x - 8} y={PAD_T} width={BAR_WIDTH + 16} height={barAreaH + PAD_B} fill="transparent" />
 
-            {segments.map(({ cat, y, h }, segIdx) => {
-              const isTop = segIdx === segments.length - 1
-              return (
-                <rect key={cat} x={x} y={y} width={BAR_WIDTH} height={Math.max(h, 1)}
-                  fill={catColor(cat)} rx={isTop ? 4 : 0} />
-              )
-            })}
+              {segments.map(({ cat, y, h }, segIdx) => {
+                const isTop = segIdx === segments.length - 1
+                return (
+                  <rect
+                    key={cat}
+                    x={x} y={y} width={BAR_WIDTH} height={Math.max(h, 1)}
+                    fill={catColor(cat)} rx={isTop ? 4 : 0}
+                    onMouseEnter={e => handleSegmentEnter(e, cat, month.by_category[cat] ?? 0, month.month_label)}
+                    onTouchStart={e => { e.stopPropagation(); handleSegmentEnter(e, cat, month.by_category[cat] ?? 0, month.month_label) }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                )
+              })}
 
-            {segments.length > 0 && (() => {
-              const bottom = segments[0]
-              return (
-                <rect key="bottom-round" x={x} y={bottom.y + bottom.h - 4}
-                  width={BAR_WIDTH} height={4} fill={catColor(segments[0].cat)} rx={0} />
-              )
-            })()}
+              {segments.length > 0 && (() => {
+                const bottom = segments[0]
+                return (
+                  <rect key="bottom-round" x={x} y={bottom.y + bottom.h - 4}
+                    width={BAR_WIDTH} height={4} fill={catColor(segments[0].cat)} rx={0} />
+                )
+              })()}
 
-            <text x={x + BAR_WIDTH / 2} y={yBaseline + 14} textAnchor="middle" fontSize={11}
-              fontWeight={isSelected ? 700 : 400} fill={isSelected ? '#03a9f4' : '#6b7280'}
-              fontFamily="ui-sans-serif, system-ui, sans-serif">
-              {shortLabel(month.month_label)}
-            </text>
+              <text x={x + BAR_WIDTH / 2} y={yBaseline + 14} textAnchor="middle" fontSize={11}
+                fontWeight={isSelected ? 700 : 400} fill={isSelected ? '#03a9f4' : '#6b7280'}
+                fontFamily="ui-sans-serif, system-ui, sans-serif">
+                {shortLabel(month.month_label)}
+              </text>
 
-            <text x={x + BAR_WIDTH / 2} y={yBaseline + 28} textAnchor="middle" fontSize={10}
-              fill={isSelected ? '#03a9f4' : '#9ca3af'}
-              fontFamily="ui-monospace, 'JetBrains Mono', monospace"
-              fontWeight={isSelected ? 600 : 400}>
-              {fmtShort(month.total)}
-            </text>
-          </g>
-        )
-      })}
-    </svg>
-  )
-}
+              <text x={x + BAR_WIDTH / 2} y={yBaseline + 28} textAnchor="middle" fontSize={10}
+                fill={isSelected ? '#03a9f4' : '#9ca3af'}
+                fontFamily="ui-monospace, 'JetBrains Mono', monospace"
+                fontWeight={isSelected ? 600 : 400}>
+                {fmtShort(month.total)}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
 
-// ── Category legend ────────────────────────────────────────────────────────
-
-function CategoryLegend({ categories }: { categories: string[] }) {
-  return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 px-1 pt-1">
-      {categories.map(cat => (
-        <div key={cat} className="flex items-center gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: catColor(cat) }} />
-          <span className="text-[11px] text-gray-500">{catIcon(cat)} {cat}</span>
+      {/* Floating tooltip */}
+      {tooltip && (
+        <div
+          className="pointer-events-none absolute z-10 flex items-center gap-2 bg-gray-900/90 text-white text-xs px-3 py-2 rounded-xl shadow-lg backdrop-blur-sm whitespace-nowrap"
+          style={{
+            left: tooltip.x,
+            top:  tooltip.y,
+            transform: 'translate(-50%, -100%)',
+          }}
+        >
+          <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: catColor(tooltip.cat) }} />
+          <span>{catIcon(tooltip.cat)} {tooltip.cat}</span>
+          <span className="font-mono font-semibold">{fmt(tooltip.amount)}</span>
         </div>
-      ))}
+      )}
     </div>
   )
 }
@@ -318,9 +368,10 @@ export function Trends() {
             />
           </div>
 
-          <div className="mt-3">
-            <CategoryLegend categories={categories} />
-          </div>
+          {/* Hint text instead of legend */}
+          <p className="mt-2 text-[11px] text-gray-400 text-center">
+            Hover or tap a segment to see category · click a bar to select month
+          </p>
         </div>
 
         <div className="border-t border-gray-100" />

@@ -5,16 +5,18 @@ interface CategorySelectProps {
   value: string
   categories: Category[]
   onChange: (cat: string) => void
+  disabled?: boolean
 }
 
-export function CategorySelect({ value, categories, onChange }: CategorySelectProps) {
+export function CategorySelect({ value, categories, onChange, disabled }: CategorySelectProps) {
   const color = catColor(value)
   return (
     <div className="relative">
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="w-full appearance-none text-xs py-1.5 pl-3 pr-7 rounded-md border border-gray-200 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-transparent transition-shadow"
+        disabled={disabled}
+        className="w-full appearance-none text-xs py-1.5 pl-3 pr-7 rounded-md border border-gray-200 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-transparent transition-shadow disabled:cursor-default disabled:opacity-70"
         style={{ borderLeftWidth: 3, borderLeftColor: color }}
       >
         {categories.map(c => (

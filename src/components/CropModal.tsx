@@ -142,14 +142,15 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
 
       if (cancelled) return
 
-      // Need a rAF to ensure the canvas is in the DOM and has layout
-      await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      // Single rAF to ensure React has committed before we read canvasRef
+      await new Promise<void>(r => requestAnimationFrame(() => r()))
       if (cancelled) return
 
       initCanvas(img)
       cornersRef.current = defaultCorners()
       setReady(true)
-      draw()
+      // draw() called in a follow-up rAF after React shows the canvas
+      requestAnimationFrame(() => { if (!cancelled) draw() })
 
       // Background edge detection
       setDetecting(true)
@@ -248,35 +249,36 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
           </button>
         </div>
 
-        {/* Canvas area */}
+        {/* Canvas area — canvas is always in DOM so canvasRef is always attached */}
         <div className="flex-1 overflow-auto p-4 flex items-center justify-center min-h-0 bg-gray-50">
-          {!ready ? (
-            <div className="flex flex-col items-center gap-3 py-16 text-gray-400">
+          {/* Spinner: visible until ready */}
+          {!ready && (
+            <div className="absolute flex flex-col items-center gap-3 py-16 text-gray-400 pointer-events-none">
               <Loader2 className="w-8 h-8 animate-spin text-[#03a9f4]" />
               <p className="text-sm">Loading image…</p>
             </div>
-          ) : (
-            <div className="relative">
-              <canvas
-                ref={canvasRef}
-                className="rounded-lg block max-w-full"
-                style={{ cursor: 'crosshair', userSelect: 'none', touchAction: 'none' }}
-                onMouseDown={onPointerDown}
-                onMouseMove={onPointerMove}
-                onMouseUp={onPointerUp}
-                onMouseLeave={onPointerUp}
-                onTouchStart={e => { e.preventDefault(); onPointerDown(e) }}
-                onTouchMove={e => { e.preventDefault(); onPointerMove(e) }}
-                onTouchEnd={e => { e.preventDefault(); onPointerUp() }}
-              />
-              {detecting && (
-                <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-black/60 text-white text-xs px-2.5 py-1.5 rounded-full">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Detecting edges…
-                </div>
-              )}
-            </div>
           )}
+          {/* Canvas: always rendered so ref attaches; hidden until ready */}
+          <div className="relative" style={{ display: ready ? 'block' : 'none' }}>
+            <canvas
+              ref={canvasRef}
+              className="rounded-lg block max-w-full"
+              style={{ cursor: 'crosshair', userSelect: 'none', touchAction: 'none' }}
+              onMouseDown={onPointerDown}
+              onMouseMove={onPointerMove}
+              onMouseUp={onPointerUp}
+              onMouseLeave={onPointerUp}
+              onTouchStart={e => { e.preventDefault(); onPointerDown(e) }}
+              onTouchMove={e => { e.preventDefault(); onPointerMove(e) }}
+              onTouchEnd={e => { e.preventDefault(); onPointerUp() }}
+            />
+            {detecting && (
+              <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-black/60 text-white text-xs px-2.5 py-1.5 rounded-full">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Detecting edges…
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Footer */}

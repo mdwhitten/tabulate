@@ -234,12 +234,20 @@ async def upload_receipt(
 
 # ── Save (finalize after review) ──────────────────────────────────────────────
 
+class NewLineItem(BaseModel):
+    name: str
+    price: float
+    category: str = "Other"
+
 class SaveReceiptBody(BaseModel):
     corrections: dict = {}            # {str(item_id): new_category}
     price_corrections: dict = {}      # {str(item_id): new_price_float}
+    name_corrections: dict = {}       # {str(item_id): new_name}
     manual_total: Optional[float] = None  # user-entered total when OCR missed it
     receipt_date: Optional[str] = None    # user-confirmed or manually entered date (YYYY-MM-DD)
     store_name: Optional[str] = None      # user-edited store name
+    new_items: list[NewLineItem] = []     # items added by user
+    deleted_item_ids: list[int] = []      # item IDs to remove
 
 
 @router.post("/{receipt_id}/save")
@@ -255,6 +263,30 @@ async def save_receipt(
     async with db.execute("SELECT id FROM receipts WHERE id = ?", (receipt_id,)) as cur:
         if not await cur.fetchone():
             raise HTTPException(status_code=404, detail="Receipt not found")
+
+    # Delete items the user removed
+    for item_id in body.deleted_item_ids:
+        await db.execute("DELETE FROM line_items WHERE id = ? AND receipt_id = ?", (item_id, receipt_id))
+
+    # Insert new items added by user
+    for new_item in body.new_items:
+        price_val = round(float(new_item.price), 2)
+        name = new_item.name.strip() or "Item"
+        category = new_item.category or "Other"
+        await db.execute(
+            """INSERT INTO line_items (receipt_id, raw_name, clean_name, price, quantity, category, category_source, corrected)
+               VALUES (?, ?, ?, ?, 1, ?, 'manual', 1)""",
+            (receipt_id, name, name, price_val, category),
+        )
+
+    # Apply name corrections
+    for item_id_str, new_name in body.name_corrections.items():
+        name = new_name.strip()
+        if name:
+            await db.execute(
+                "UPDATE line_items SET raw_name = ?, clean_name = ? WHERE id = ? AND receipt_id = ?",
+                (name, name, int(item_id_str), receipt_id),
+            )
 
     for item_id_str, new_category in body.corrections.items():
         await apply_manual_correction(db, int(item_id_str), new_category)

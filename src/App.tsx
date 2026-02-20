@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppShell } from './components/layout/AppShell'
+import type { AppShellRef } from './components/layout/AppShell'
 import { Dashboard } from './pages/Dashboard'
 import { AllReceipts } from './pages/AllReceipts'
 import { ReviewReceipt } from './pages/ReviewReceipt'
@@ -132,6 +133,7 @@ export default function App() {
   const [route, setRoute]             = useState<RouteState>(() => parseUrl(window.location.pathname))
   const [freshResult, setFreshResult] = useState<ProcessingResult | null>(null)
   const [uploadOpen, setUploadOpen]   = useState(false)
+  const shellRef = useRef<AppShellRef>(null)
 
   const { page, receiptId } = route
 
@@ -162,7 +164,10 @@ export default function App() {
   function openReceipt(id: number) { setFreshResult(null); navigate('review', id) }
 
   function handleUploadSuccess(result: ProcessingResult) {
-    setUploadOpen(false); setFreshResult(result); navigate('review', result.receipt_id)
+    setUploadOpen(false)
+    shellRef.current?.closeSidebar()   // close mobile sidebar so review is visible
+    setFreshResult(result)
+    navigate('review', result.receipt_id)
   }
 
   function handleRescan() { setFreshResult(null); navigate('receipts'); setUploadOpen(true) }
@@ -175,6 +180,7 @@ export default function App() {
   return (
     <>
       <AppShell
+        ref={shellRef}
         currentPage={page}
         onNavigate={p => { setFreshResult(null); navigate(p) }}
         onUpload={() => setUploadOpen(true)}

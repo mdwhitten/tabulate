@@ -1,7 +1,11 @@
-import { useState } from 'react'
+import { useState, useImperativeHandle, forwardRef } from 'react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import type { Page } from '../../types'
+
+export interface AppShellRef {
+  closeSidebar: () => void
+}
 
 interface AppShellProps {
   currentPage: Page
@@ -13,12 +17,15 @@ interface AppShellProps {
   children: React.ReactNode
 }
 
-export function AppShell({
-  currentPage, onNavigate, onUpload,
-  topbarTitle, topbarLeft, topbarRight,
-  children,
-}: AppShellProps) {
+export const AppShell = forwardRef<AppShellRef, AppShellProps>(function AppShell(
+  { currentPage, onNavigate, onUpload, topbarTitle, topbarLeft, topbarRight, children },
+  ref
+) {
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  useImperativeHandle(ref, () => ({
+    closeSidebar: () => setMobileOpen(false),
+  }))
 
   return (
     <div className="min-h-screen bg-[#f5f6fa]">
@@ -37,10 +44,10 @@ export function AppShell({
       />
       {/* Content area — offset for fixed sidebar + topbar */}
       <main className="lg:ml-60 pt-12 min-h-screen">
-        <div className="p-4 lg:p-6 animate-[fadeUp_200ms_ease-out]">
+        <div className="p-2 sm:p-4 lg:p-6 animate-[fadeUp_200ms_ease-out]">
           {children}
         </div>
       </main>
     </div>
   )
-}
+})

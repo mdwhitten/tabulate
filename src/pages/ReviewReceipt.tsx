@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { CalendarDays, Store, X, RotateCcw, Save, Trash2 } from 'lucide-react'
-import type { Receipt, Category, SaveReceiptBody } from '../types'
+import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
 import { LineItemsTable } from '../components/LineItemsTable'
+import type { LocalItem } from '../components/LineItemsTable'
+import { nextTempId } from '../components/LineItemsTable'
 import { ReceiptPreview } from '../components/ReceiptPreview'
 import { CropModal } from '../components/CropModal'
 import { cropReceipt } from '../api/receipts'
@@ -12,15 +14,19 @@ import { fmt } from '../lib/utils'
 // ── State ─────────────────────────────────────────────────────────────────────
 
 interface ReviewState {
-  items: Receipt['items']
+  items:               Receipt['items']
   categoryCorrections: Record<number, string>
-  priceCorrections: Record<number, number>
-  manualTotal: number | null
+  priceCorrections:    Record<number, number>
+  nameCorrections:     Record<number, string>
+  deletedItemIds:      Set<number>
+  manualTotal:         number | null
 }
 
 type ReviewAction =
-  | { type: 'SET_CATEGORY'; itemId: number; category: string }
-  | { type: 'SET_PRICE';    itemId: number; unitPrice: number }
+  | { type: 'SET_CATEGORY';    itemId: number; category: string }
+  | { type: 'SET_PRICE';       itemId: number; unitPrice: number }
+  | { type: 'SET_NAME';        itemId: number; name: string }
+  | { type: 'DELETE_ITEM';     itemId: number }
   | { type: 'SET_MANUAL_TOTAL'; total: number | null }
 
 function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
@@ -41,6 +47,25 @@ function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
           it.id === action.itemId ? { ...it, price: action.unitPrice } : it
         ),
       }
+    case 'SET_NAME':
+      return {
+        ...state,
+        nameCorrections: { ...state.nameCorrections, [action.itemId]: action.name },
+        items: state.items.map(it =>
+          it.id === action.itemId
+            ? { ...it, clean_name: action.name, raw_name: action.name }
+            : it
+        ),
+      }
+    case 'DELETE_ITEM': {
+      const newDeleted = new Set(state.deletedItemIds)
+      newDeleted.add(action.itemId)
+      return {
+        ...state,
+        deletedItemIds: newDeleted,
+        items: state.items.filter(it => it.id !== action.itemId),
+      }
+    }
     case 'SET_MANUAL_TOTAL':
       return { ...state, manualTotal: action.total }
     default:
@@ -72,16 +97,21 @@ export function ReviewReceipt({
   const isVerified = receipt.status === 'verified'
 
   const [state, dispatch] = useReducer(reviewReducer, {
-    items: receipt.items,
+    items:               receipt.items,
     categoryCorrections: {},
-    priceCorrections: {},
-    manualTotal: receipt.total ?? null,
+    priceCorrections:    {},
+    nameCorrections:     {},
+    deletedItemIds:      new Set<number>(),
+    manualTotal:         receipt.total ?? null,
   })
 
-  const [saving, setSaving]           = useState(false)
-  const [receiptDate, setReceiptDate] = useState(receipt.receipt_date ?? '')
-  const [storeName, setStoreName]     = useState(receipt.store_name ?? '')
-  const [cropOpen, setCropOpen]       = useState(false)
+  // Locally-added items (not yet in DB, queued for save)
+  const [localItems, setLocalItems] = useState<LocalItem[]>([])
+
+  const [saving, setSaving]             = useState(false)
+  const [receiptDate, setReceiptDate]   = useState(receipt.receipt_date ?? '')
+  const [storeName, setStoreName]       = useState(receipt.store_name ?? '')
+  const [cropOpen, setCropOpen]         = useState(false)
   const [imgCacheBust, setImgCacheBust] = useState(0)
 
   // Expose save to topbar via CustomEvent
@@ -95,15 +125,17 @@ export function ReviewReceipt({
   // ── Derived verification ─────────────────────────────────────────────────
 
   const subtotal = useMemo(
-    () => state.items.reduce((s, i) => s + i.price * i.quantity, 0),
-    [state.items]
+    () => state.items.reduce((s, i) => s + i.price * i.quantity, 0)
+        + localItems.reduce((s, i) => s + i.price, 0),
+    [state.items, localItems]
   )
 
   const tax   = receipt.tax ?? 0
   const total = state.manualTotal ?? receipt.total
 
   const { verifyStatus, verifyTitle, verifyDetail } = useMemo(() => {
-    if (receipt.total_verified && Object.keys(state.priceCorrections).length === 0) {
+    if (receipt.total_verified && Object.keys(state.priceCorrections).length === 0
+        && state.deletedItemIds.size === 0 && localItems.length === 0) {
       return {
         verifyStatus: 'verified' as const,
         verifyTitle:  'Total Verified',
@@ -129,7 +161,7 @@ export function ReviewReceipt({
       verifyTitle:  'Total Not Found',
       verifyDetail: receipt.verification_message ?? 'Could not read receipt total.',
     }
-  }, [subtotal, tax, total, state.priceCorrections, receipt])
+  }, [subtotal, tax, total, state.priceCorrections, state.deletedItemIds, localItems, receipt])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -139,6 +171,26 @@ export function ReviewReceipt({
 
   const handlePriceChange = useCallback((itemId: number, unitPrice: number) => {
     dispatch({ type: 'SET_PRICE', itemId, unitPrice })
+  }, [])
+
+  const handleNameChange = useCallback((itemId: number, name: string) => {
+    dispatch({ type: 'SET_NAME', itemId, name })
+  }, [])
+
+  const handleDeleteItem = useCallback((itemId: number) => {
+    dispatch({ type: 'DELETE_ITEM', itemId })
+  }, [])
+
+  const handleAddItem = useCallback((item: NewLineItemBody) => {
+    setLocalItems(prev => [...prev, { _tempId: nextTempId(), ...item }])
+  }, [])
+
+  const handleLocalItemChange = useCallback((tempId: number, patch: Partial<LocalItem>) => {
+    setLocalItems(prev => prev.map(it => it._tempId === tempId ? { ...it, ...patch } : it))
+  }, [])
+
+  const handleDeleteLocal = useCallback((tempId: number) => {
+    setLocalItems(prev => prev.filter(it => it._tempId !== tempId))
   }, [])
 
   const handleSave = useCallback(async () => {
@@ -152,21 +204,26 @@ export function ReviewReceipt({
         price_corrections: Object.fromEntries(
           Object.entries(state.priceCorrections).map(([k, v]) => [k, v])
         ),
-        manual_total: isVerified ? null : (state.manualTotal ?? null),
-        receipt_date: receiptDate || null,
-        store_name:   storeName  || null,
+        name_corrections: Object.fromEntries(
+          Object.entries(state.nameCorrections).map(([k, v]) => [k, v])
+        ),
+        manual_total:    isVerified ? null : (state.manualTotal ?? null),
+        receipt_date:    receiptDate || null,
+        store_name:      storeName   || null,
+        new_items:       localItems.map(({ name, price, category }) => ({ name, price, category })),
+        deleted_item_ids: Array.from(state.deletedItemIds),
       })
     } finally {
       setSaving(false)
     }
-  }, [onSave, state, isVerified, receiptDate, storeName])
+  }, [onSave, state, isVerified, receiptDate, storeName, localItems])
 
-  useEffect(() => { handleSaveRef.current = handleSave }, [handleSave])  // keep ref fresh
+  useEffect(() => { handleSaveRef.current = handleSave }, [handleSave])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 md:p-6">
+    <div className="min-h-screen bg-gray-100">
       {/* Verify bar */}
       <VerifyBar
         status={verifyStatus}
@@ -180,13 +237,13 @@ export function ReviewReceipt({
       />
 
       {/* Main layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-4 mt-2">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-3 mt-2">
 
         {/* Left: Line items */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
 
           {/* Card header */}
-          <div className="flex items-start justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-start justify-between px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-100">
             <div className="flex-1 min-w-0 mr-3">
               <p className="text-[11px] uppercase tracking-widest text-gray-400 font-medium mb-0.5">
                 Line Items
@@ -216,7 +273,7 @@ export function ReviewReceipt({
           </div>
 
           {/* Date row */}
-          <div className="flex items-center gap-2 px-5 py-2.5 bg-gray-50 border-b border-gray-100">
+          <div className="flex items-center gap-2 px-3 sm:px-5 py-2 bg-gray-50 border-b border-gray-100">
             <CalendarDays className="w-3.5 h-3.5 text-gray-400 shrink-0" />
             <label className="text-xs text-gray-500 font-mono whitespace-nowrap">Receipt date:</label>
             <input
@@ -232,16 +289,22 @@ export function ReviewReceipt({
           <div className="flex-1 overflow-auto">
             <LineItemsTable
               items={state.items}
+              localItems={localItems}
               categories={categories}
               locked={isVerified}
               onCategoryChange={handleCategoryChange}
               onPriceChange={handlePriceChange}
+              onNameChange={handleNameChange}
+              onDeleteItem={handleDeleteItem}
+              onAddItem={handleAddItem}
+              onLocalItemChange={handleLocalItemChange}
+              onDeleteLocal={handleDeleteLocal}
             />
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50">
-            <div className="flex gap-2">
+          <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 flex-wrap">
+            <div className="flex gap-2 flex-wrap">
               {isFreshUpload && (
                 <button onClick={onRescan}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
