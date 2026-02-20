@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ImageIcon, FileText, AlertCircle } from 'lucide-react'
+import { ImageIcon, FileText, AlertCircle, Scissors } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { receiptThumbnailUrl } from '../api/receipts'
 
@@ -7,12 +7,22 @@ interface ReceiptPreviewProps {
   ocrText: string | null
   receiptId: number
   thumbnailPath: string | null
+  /** Called when user clicks Edit Crop; parent opens CropModal + increments imgCacheBust on complete */
+  onEditCrop?: () => void
+  /** Increment to force the thumbnail to reload after a re-crop */
+  imgCacheBust?: number
 }
 
 type Tab = 'image' | 'ocr'
 
-export function ReceiptPreview({ ocrText, receiptId, thumbnailPath }: ReceiptPreviewProps) {
-  const [tab, setTab]         = useState<Tab>(thumbnailPath ? 'image' : 'ocr')
+export function ReceiptPreview({
+  ocrText,
+  receiptId,
+  thumbnailPath,
+  onEditCrop,
+  imgCacheBust = 0,
+}: ReceiptPreviewProps) {
+  const [tab, setTab]           = useState<Tab>(thumbnailPath ? 'image' : 'ocr')
   const [imgError, setImgError] = useState(false)
 
   const hasImage = Boolean(thumbnailPath) && !imgError
@@ -45,12 +55,24 @@ export function ReceiptPreview({ ocrText, receiptId, thumbnailPath }: ReceiptPre
       <div className="flex-1 overflow-auto p-3 min-h-0">
         {tab === 'image' ? (
           hasImage ? (
-            <img
-              src={`${receiptThumbnailUrl(receiptId)}?_=${receiptId}`}
-              alt="Receipt"
-              onError={() => setImgError(true)}
-              className="w-full rounded-lg object-contain"
-            />
+            <div className="flex flex-col gap-2">
+              <img
+                key={imgCacheBust}
+                src={`${receiptThumbnailUrl(receiptId)}?_=${imgCacheBust || receiptId}`}
+                alt="Receipt"
+                onError={() => setImgError(true)}
+                className="w-full rounded-lg object-contain"
+              />
+              {onEditCrop && (
+                <button
+                  onClick={onEditCrop}
+                  className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                >
+                  <Scissors className="w-3.5 h-3.5" />
+                  Edit Crop
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full min-h-48 bg-gray-50 rounded-xl border border-dashed border-gray-200">
               <div className="text-center text-gray-400">

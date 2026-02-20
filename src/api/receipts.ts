@@ -63,3 +63,43 @@ export function receiptThumbnailUrl(id: number): string {
 export function receiptImageUrl(id: number): string {
   return `/api/receipts/${id}/image`
 }
+
+// ── Crop / Edge detection ──────────────────────────────────────────────────
+
+export type CropCorners = [[number, number], [number, number], [number, number], [number, number]]
+
+/** Detect receipt edges on a file before upload (returns fractional corners TL→TR→BR→BL). */
+export async function detectEdgesRaw(file: File): Promise<CropCorners | null> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/receipts/detect-edges-raw', { method: 'POST', body: form })
+  if (!res.ok) return null
+  const data = await res.json()
+  return data.corners ?? null
+}
+
+/** Detect receipt edges on an already-saved receipt image. */
+export async function detectEdges(receiptId: number): Promise<CropCorners | null> {
+  const res = await fetch(`/api/receipts/${receiptId}/detect-edges`)
+  if (!res.ok) return null
+  const data = await res.json()
+  return data.corners ?? null
+}
+
+/** Apply a crop to an existing receipt (overwrites image + thumbnail). */
+export async function cropReceipt(
+  receiptId: number,
+  corners: CropCorners,
+): Promise<{ status: string; thumbnail_path: string }> {
+  const res = await fetch(`/api/receipts/${receiptId}/crop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ corners }),
+  })
+  if (!res.ok) {
+    let detail = res.statusText
+    try { const b = await res.json(); detail = b.detail ?? detail } catch { /* ignore */ }
+    throw new Error(`Crop failed: ${detail}`)
+  }
+  return res.json()
+}

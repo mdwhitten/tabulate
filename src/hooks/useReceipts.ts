@@ -6,6 +6,7 @@ import {
   saveReceipt,
   deleteReceipt,
 } from '../api/receipts'
+import type { CropCorners } from '../api/receipts'
 import type { SaveReceiptBody } from '../types'
 
 export const receiptKeys = {
@@ -32,7 +33,7 @@ export function useReceipt(id: number | null) {
 export function useUploadReceipt() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, cropCorners }: { file: File; cropCorners?: [number, number][] | null }) =>
+    mutationFn: ({ file, cropCorners }: { file: File; cropCorners?: CropCorners | null }) =>
       uploadReceipt(file, cropCorners),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: receiptKeys.list() })

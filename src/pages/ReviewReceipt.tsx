@@ -5,6 +5,8 @@ import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
 import { LineItemsTable } from '../components/LineItemsTable'
 import { ReceiptPreview } from '../components/ReceiptPreview'
+import { CropModal } from '../components/CropModal'
+import { cropReceipt } from '../api/receipts'
 import { fmt } from '../lib/utils'
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -79,6 +81,8 @@ export function ReviewReceipt({
   const [saving, setSaving]           = useState(false)
   const [receiptDate, setReceiptDate] = useState(receipt.receipt_date ?? '')
   const [storeName, setStoreName]     = useState(receipt.store_name ?? '')
+  const [cropOpen, setCropOpen]       = useState(false)
+  const [imgCacheBust, setImgCacheBust] = useState(0)
 
   // Expose save to topbar via CustomEvent
   const handleSaveRef = useRef<(() => Promise<void>) | null>(null)
@@ -274,9 +278,28 @@ export function ReviewReceipt({
             ocrText={receipt.ocr_raw}
             receiptId={receipt.id}
             thumbnailPath={receipt.thumbnail_path}
+            imgCacheBust={imgCacheBust}
+            onEditCrop={receipt.thumbnail_path ? () => setCropOpen(true) : undefined}
           />
         </div>
       </div>
+
+      {/* Re-crop modal */}
+      {cropOpen && (
+        <CropModal
+          receiptId={receipt.id}
+          onConfirm={async corners => {
+            setCropOpen(false)
+            try {
+              await cropReceipt(receipt.id, corners)
+              setImgCacheBust(n => n + 1)
+            } catch (e) {
+              console.error('Crop failed', e)
+            }
+          }}
+          onCancel={() => setCropOpen(false)}
+        />
+      )}
     </div>
   )
 }

@@ -2,27 +2,40 @@ import { useCallback, useRef, useState } from 'react'
 import { Upload, X, Loader2, AlertCircle } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useUploadReceipt } from '../hooks/useReceipts'
-import type { ProcessingResult } from '../api/receipts'
+import { CropModal } from './CropModal'
+import type { ProcessingResult, CropCorners } from '../api/receipts'
 
 interface UploadModalProps {
   onClose: () => void
   onSuccess: (result: ProcessingResult) => void
 }
 
+type Stage = 'pick' | 'crop' | 'uploading'
+
 export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
-  const [dragOver, setDragOver] = useState(false)
+  const [dragOver, setDragOver]       = useState(false)
+  const [stage, setStage]             = useState<Stage>('pick')
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const upload   = useUploadReceipt()
 
-  const handleFile = useCallback(async (file: File) => {
-    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
-      return // silently ignore non-image/pdf drops
-    }
+  // Step 1 — file selected: go to crop stage
+  const handleFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') return
+    setPendingFile(file)
+    setStage('crop')
+  }, [])
+
+  // Step 2 — crop confirmed or skipped: upload
+  const doUpload = useCallback(async (file: File, cropCorners?: CropCorners | null) => {
+    setStage('uploading')
     try {
-      const result = await upload.mutateAsync({ file })
+      const result = await upload.mutateAsync({ file, cropCorners })
       onSuccess(result)
     } catch {
-      // error is on upload.error
+      // error is on upload.error — return to pick so user can retry
+      setStage('pick')
+      setPendingFile(null)
     }
   }, [upload, onSuccess])
 
@@ -36,12 +49,27 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
   const onInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) handleFile(file)
+    e.target.value = ''   // reset so same file can be re-selected
   }, [handleFile])
 
-  const isPending = upload.isPending
+  // ── Crop stage ─────────────────────────────────────────────────────────────
+
+  if (stage === 'crop' && pendingFile) {
+    return (
+      <CropModal
+        file={pendingFile}
+        onConfirm={corners => doUpload(pendingFile, corners)}
+        onSkip={() => doUpload(pendingFile, null)}
+        onCancel={() => { setStage('pick'); setPendingFile(null) }}
+      />
+    )
+  }
+
+  // ── Pick / uploading stage ─────────────────────────────────────────────────
+
+  const isPending = stage === 'uploading'
 
   return (
-    /* Backdrop */
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget && !isPending) onClose() }}
