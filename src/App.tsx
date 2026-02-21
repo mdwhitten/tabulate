@@ -17,11 +17,27 @@ import type { Receipt, SaveReceiptBody } from './types'
 import { ArrowLeft, Save, Camera } from 'lucide-react'
 import './index.css'
 
-// ── URL ↔ Page/receiptId ──────────────────────────────────────────────────────
+// ── Ingress-aware URL helpers ─────────────────────────────────────────────────
+
+/**
+ * Detect the HA ingress prefix from the current URL so that pushState and
+ * parseUrl work correctly whether running standalone or inside HA ingress.
+ *
+ * HA ingress serves the app at /api/hassio_ingress/<token>/
+ * Standalone serves at /
+ */
+const INGRESS_PREFIX = (() => {
+  const m = window.location.pathname.match(/^(\/api\/hassio_ingress\/[^/]+)/)
+  return m ? m[1] : ''
+})()
 
 type RouteState = { page: Page; receiptId: number | null }
 
-function parseUrl(path: string): RouteState {
+/** Strip the ingress prefix (if any) before matching routes. */
+function parseUrl(fullPath: string): RouteState {
+  const path = INGRESS_PREFIX
+    ? fullPath.replace(INGRESS_PREFIX, '') || '/'
+    : fullPath
   const reviewMatch = path.match(/^\/receipts\/(\d+)$/)
   if (reviewMatch) return { page: 'review', receiptId: Number(reviewMatch[1]) }
   const map: Record<string, Page> = {
@@ -31,13 +47,19 @@ function parseUrl(path: string): RouteState {
   return { page: map[path] ?? 'dashboard', receiptId: null }
 }
 
+/** Build a full browser path including ingress prefix. */
 function pageToPath(page: Page, receiptId?: number | null): string {
-  if (page === 'review' && receiptId != null) return `/receipts/${receiptId}`
-  const map: Record<Page, string> = {
-    dashboard: '/', receipts: '/receipts', trends: '/trends',
-    categories: '/categories', learned: '/learned', review: '/receipts',
+  let rel = '/'
+  if (page === 'review' && receiptId != null) {
+    rel = `/receipts/${receiptId}`
+  } else {
+    const map: Record<Page, string> = {
+      dashboard: '/', receipts: '/receipts', trends: '/trends',
+      categories: '/categories', learned: '/learned', review: '/receipts',
+    }
+    rel = map[page]
   }
-  return map[page]
+  return INGRESS_PREFIX + rel
 }
 
 const PAGE_TITLES: Record<Page, string> = {
