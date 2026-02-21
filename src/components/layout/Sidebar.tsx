@@ -1,4 +1,4 @@
-import { LayoutDashboard, Receipt, TrendingUp, Tag, BookOpen, Upload, X } from 'lucide-react'
+import { LayoutDashboard, Receipt, TrendingUp, Tag, BookOpen, Camera, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { Page } from '../../types'
 
@@ -112,7 +112,7 @@ export function Sidebar({ current, onNavigate, onUpload, mobileOpen, onMobileClo
             onClick={onUpload}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#03a9f4] hover:bg-[#0290d1] text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-[#03a9f4]/25"
           >
-            <Upload className="w-4 h-4" />
+            <Camera className="w-4 h-4" />
             Scan Receipt
           </button>
         </div>

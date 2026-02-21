@@ -6,6 +6,7 @@ import { PriceInput } from './PriceInput'
 import { SourceTag } from './SourceTag'
 import { fmt } from '../lib/utils'
 import { Plus, Trash2, Tag } from 'lucide-react'
+import { useSwipeToDelete } from '../hooks/useSwipeToDelete'
 
 /** A locally-created item (not yet saved) has a negative temp id */
 export interface LocalItem {
@@ -38,6 +39,229 @@ function isDiscount(item: LineItem): boolean {
 
 let _nextTempId = -1
 export function nextTempId() { return _nextTempId-- }
+
+
+// ── Swipeable DB item row ───────────────────────────────────────────────────
+
+interface ItemRowProps {
+  item: LineItem
+  categories: Category[]
+  locked: boolean
+  onCategoryChange: (itemId: number, category: string) => void
+  onPriceChange:    (itemId: number, newUnitPrice: number) => void
+  onNameChange:     (itemId: number, newName: string) => void
+  onDeleteItem:     (itemId: number) => void
+}
+
+function ItemRow({ item, categories, locked, onCategoryChange, onPriceChange, onNameChange, onDeleteItem }: ItemRowProps) {
+  const { touchHandlers, rowStyle, isPastThreshold, offset } = useSwipeToDelete({
+    onDelete: () => onDeleteItem(item.id),
+    disabled: locked,
+  })
+
+  const normalize = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+  const showRaw   = item.clean_name && item.raw_name &&
+    normalize(item.clean_name) !== normalize(item.raw_name)
+  const lineTotal = item.price * item.quantity
+  const discount  = isDiscount(item)
+
+  return (
+    <tr
+      className={[
+        'border-b border-gray-50 hover:bg-gray-50/70 transition-colors group',
+        discount ? 'bg-emerald-50/60' : '',
+      ].join(' ')}
+      {...touchHandlers}
+    >
+      {/* Item name */}
+      <td className="px-2 py-2.5 align-middle">
+        <div style={rowStyle}>
+          {locked ? (
+            <p className={['font-medium leading-tight', discount ? 'text-emerald-700' : 'text-gray-900'].join(' ')}>
+              {item.clean_name || item.raw_name}
+            </p>
+          ) : (
+            <input
+              type="text"
+              defaultValue={item.clean_name || item.raw_name}
+              onBlur={e => {
+                const v = e.target.value.trim()
+                if (v && v !== (item.clean_name || item.raw_name)) onNameChange(item.id, v)
+              }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              className={[
+                'font-medium leading-tight bg-transparent border-none outline-none w-full focus:bg-white focus:ring-1 focus:ring-blue-200 rounded px-0.5 -mx-0.5',
+                discount ? 'text-emerald-700' : 'text-gray-900',
+              ].join(' ')}
+            />
+          )}
+          {showRaw && (
+            <p className="text-[11px] text-gray-400 font-mono mt-0.5 truncate max-w-[160px]">
+              {item.raw_name}
+            </p>
+          )}
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            {discount && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">
+                <Tag className="w-2.5 h-2.5" />
+                Discount
+              </span>
+            )}
+            <SourceTag source={item.category_source} />
+            {item.quantity > 1 && (
+              <span className="text-[11px] text-gray-400 font-mono">
+                ×{item.quantity} @ {fmt(item.price)}
+              </span>
+            )}
+          </div>
+        </div>
+      </td>
+
+      {/* Category */}
+      <td className="px-2 py-2.5 align-middle w-36">
+        <div style={rowStyle}>
+          <CategorySelect
+            value={item.category}
+            categories={categories}
+            onChange={cat => onCategoryChange(item.id, cat)}
+            disabled={locked}
+          />
+        </div>
+      </td>
+
+      {/* Price + swipe delete indicator */}
+      <td className="px-2 py-2.5 align-middle text-right relative overflow-visible">
+        <div style={rowStyle}>
+          <PriceInput
+            lineTotal={lineTotal}
+            locked={locked}
+            negative={discount}
+            onChange={newLineTotal => onPriceChange(item.id, newLineTotal / item.quantity)}
+          />
+        </div>
+        {/* Red delete zone — revealed as row slides left */}
+        {offset < -5 && (
+          <div
+            className={[
+              'absolute top-0 bottom-0 flex items-center justify-center transition-colors',
+              isPastThreshold ? 'bg-red-500' : 'bg-red-400',
+            ].join(' ')}
+            style={{ left: '100%', width: `${Math.abs(offset)}px` }}
+          >
+            <Trash2 className={[
+              'w-5 h-5 text-white transition-transform',
+              isPastThreshold ? 'scale-125' : '',
+            ].join(' ')} />
+          </div>
+        )}
+      </td>
+
+      {/* Desktop-only delete button */}
+      {!locked && (
+        <td className="px-1 py-2.5 align-middle hidden sm:table-cell">
+          <button
+            onClick={() => onDeleteItem(item.id)}
+            title="Remove item"
+            className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </td>
+      )}
+    </tr>
+  )
+}
+
+
+// ── Swipeable local (unsaved) item row ──────────────────────────────────────
+
+interface LocalItemRowProps {
+  loc: LocalItem
+  categories: Category[]
+  onLocalItemChange: (tempId: number, patch: Partial<LocalItem>) => void
+  onDeleteLocal:     (tempId: number) => void
+}
+
+function LocalItemRow({ loc, categories, onLocalItemChange, onDeleteLocal }: LocalItemRowProps) {
+  const { touchHandlers, rowStyle, isPastThreshold, offset } = useSwipeToDelete({
+    onDelete: () => onDeleteLocal(loc._tempId),
+  })
+
+  const negLocal = loc.price < 0
+
+  return (
+    <tr
+      className={[
+        'border-b border-gray-50 group',
+        negLocal ? 'bg-emerald-50/60' : 'bg-blue-50/40',
+      ].join(' ')}
+      {...touchHandlers}
+    >
+      <td className="px-2 py-2.5 align-middle">
+        <div style={rowStyle}>
+          <input
+            type="text"
+            value={loc.name}
+            onChange={e => onLocalItemChange(loc._tempId, { name: e.target.value })}
+            placeholder="Item name"
+            className={[
+              'font-medium leading-tight bg-transparent border-none outline-none w-full focus:bg-white focus:ring-1 focus:ring-blue-200 rounded px-0.5 -mx-0.5',
+              negLocal ? 'text-emerald-700' : 'text-gray-900',
+            ].join(' ')}
+          />
+          <span className="text-[10px] text-blue-400 font-medium">new</span>
+        </div>
+      </td>
+      <td className="px-2 py-2.5 align-middle w-36">
+        <div style={rowStyle}>
+          <CategorySelect
+            value={loc.category}
+            categories={categories}
+            onChange={cat => onLocalItemChange(loc._tempId, { category: cat })}
+          />
+        </div>
+      </td>
+      <td className="px-2 py-2.5 align-middle text-right relative overflow-visible">
+        <div style={rowStyle}>
+          <PriceInput
+            lineTotal={loc.price}
+            locked={false}
+            negative={negLocal}
+            onChange={v => onLocalItemChange(loc._tempId, { price: v })}
+          />
+        </div>
+        {offset < -5 && (
+          <div
+            className={[
+              'absolute top-0 bottom-0 flex items-center justify-center transition-colors',
+              isPastThreshold ? 'bg-red-500' : 'bg-red-400',
+            ].join(' ')}
+            style={{ left: '100%', width: `${Math.abs(offset)}px` }}
+          >
+            <Trash2 className={[
+              'w-5 h-5 text-white transition-transform',
+              isPastThreshold ? 'scale-125' : '',
+            ].join(' ')} />
+          </div>
+        )}
+      </td>
+
+      {/* Desktop-only delete button */}
+      <td className="px-1 py-2.5 align-middle hidden sm:table-cell">
+        <button
+          onClick={() => onDeleteLocal(loc._tempId)}
+          title="Remove item"
+          className="p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+
+// ── Main table ──────────────────────────────────────────────────────────────
 
 export function LineItemsTable({
   items,
@@ -86,7 +310,7 @@ export function LineItemsTable({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto overflow-y-visible">
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="border-b border-gray-100">
@@ -100,140 +324,33 @@ export function LineItemsTable({
               Price
             </th>
             {!locked && (
-              <th className="w-6 px-1 py-2" />
+              <th className="w-6 px-1 py-2 hidden sm:table-cell" />
             )}
           </tr>
         </thead>
         <tbody>
-          {items.map(item => {
-            const normalize = (s: string) => s.replace(/\s+/g, '').toLowerCase()
-            const showRaw   = item.clean_name && item.raw_name &&
-              normalize(item.clean_name) !== normalize(item.raw_name)
-            const lineTotal   = item.price * item.quantity
-            const discount    = isDiscount(item)
-
-            return (
-              <tr
-                key={item.id}
-                className={[
-                  'border-b border-gray-50 hover:bg-gray-50/70 transition-colors group',
-                  discount ? 'bg-emerald-50/60' : '',
-                ].join(' ')}
-              >
-                {/* Item name */}
-                <td className="px-2 py-2.5 align-middle">
-                  {locked ? (
-                    <p className={['font-medium leading-tight', discount ? 'text-emerald-700' : 'text-gray-900'].join(' ')}>
-                      {item.clean_name || item.raw_name}
-                    </p>
-                  ) : (
-                    <input
-                      type="text"
-                      defaultValue={item.clean_name || item.raw_name}
-                      onBlur={e => {
-                        const v = e.target.value.trim()
-                        if (v && v !== (item.clean_name || item.raw_name)) onNameChange(item.id, v)
-                      }}
-                      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                      className={[
-                        'font-medium leading-tight bg-transparent border-none outline-none w-full focus:bg-white focus:ring-1 focus:ring-blue-200 rounded px-0.5 -mx-0.5',
-                        discount ? 'text-emerald-700' : 'text-gray-900',
-                      ].join(' ')}
-                    />
-                  )}
-                  {showRaw && (
-                    <p className="text-[11px] text-gray-400 font-mono mt-0.5 truncate max-w-[160px]">
-                      {item.raw_name}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    {discount && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">
-                        <Tag className="w-2.5 h-2.5" />
-                        Discount
-                      </span>
-                    )}
-                    <SourceTag source={item.category_source} />
-                    {item.quantity > 1 && (
-                      <span className="text-[11px] text-gray-400 font-mono">
-                        ×{item.quantity} @ {fmt(item.price)}
-                      </span>
-                    )}
-                  </div>
-                </td>
-
-                {/* Category */}
-                <td className="px-2 py-2.5 align-middle w-36">
-                  <CategorySelect
-                    value={item.category}
-                    categories={categories}
-                    onChange={cat => onCategoryChange(item.id, cat)}
-                    disabled={locked}
-                  />
-                </td>
-
-                {/* Price */}
-                <td className="px-2 py-2.5 align-middle text-right">
-                  <PriceInput
-                    lineTotal={lineTotal}
-                    locked={locked}
-                    negative={discount}
-                    onChange={newLineTotal => onPriceChange(item.id, newLineTotal / item.quantity)}
-                  />
-                </td>
-
-                {!locked && (
-                  <td className="px-1 py-2.5 align-middle">
-                    <button
-                      onClick={() => onDeleteItem(item.id)}
-                      title="Remove item"
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            )
-          })}
+          {items.map(item => (
+            <ItemRow
+              key={item.id}
+              item={item}
+              categories={categories}
+              locked={locked}
+              onCategoryChange={onCategoryChange}
+              onPriceChange={onPriceChange}
+              onNameChange={onNameChange}
+              onDeleteItem={onDeleteItem}
+            />
+          ))}
 
           {/* Locally added items (not yet saved) */}
           {localItems.map(loc => (
-            <tr key={loc._tempId} className="border-b border-gray-50 bg-blue-50/40 group">
-              <td className="px-2 py-2.5 align-middle">
-                <input
-                  type="text"
-                  value={loc.name}
-                  onChange={e => onLocalItemChange(loc._tempId, { name: e.target.value })}
-                  placeholder="Item name"
-                  className="font-medium text-gray-900 leading-tight bg-transparent border-none outline-none w-full focus:bg-white focus:ring-1 focus:ring-blue-200 rounded px-0.5 -mx-0.5"
-                />
-                <span className="text-[10px] text-blue-400 font-medium">new</span>
-              </td>
-              <td className="px-2 py-2.5 align-middle w-36">
-                <CategorySelect
-                  value={loc.category}
-                  categories={categories}
-                  onChange={cat => onLocalItemChange(loc._tempId, { category: cat })}
-                />
-              </td>
-              <td className="px-2 py-2.5 align-middle text-right">
-                <PriceInput
-                  lineTotal={loc.price}
-                  locked={false}
-                  onChange={v => onLocalItemChange(loc._tempId, { price: v })}
-                />
-              </td>
-              <td className="px-1 py-2.5 align-middle">
-                <button
-                  onClick={() => onDeleteLocal(loc._tempId)}
-                  title="Remove item"
-                  className="p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </td>
-            </tr>
+            <LocalItemRow
+              key={loc._tempId}
+              loc={loc}
+              categories={categories}
+              onLocalItemChange={onLocalItemChange}
+              onDeleteLocal={onDeleteLocal}
+            />
           ))}
 
           {/* Inline add row */}
@@ -268,7 +385,7 @@ export function LineItemsTable({
                   className="w-20 text-sm font-mono text-right text-gray-900 bg-white border border-blue-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
                 />
               </td>
-              <td className="px-1 py-2 align-middle">
+              <td className="px-1 py-2 align-middle hidden sm:table-cell">
                 <button onClick={() => setAddingRow(false)} title="Cancel"
                   className="p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all">
                   <Trash2 className="w-3.5 h-3.5" />
@@ -297,7 +414,7 @@ export function LineItemsTable({
             <td className="px-2 py-3 text-right font-mono font-semibold text-gray-900 tabular-nums">
               {fmt(subtotal)}
             </td>
-            {!locked && <td />}
+            {!locked && <td className="hidden sm:table-cell" />}
           </tr>
         </tfoot>
       </table>

@@ -9,7 +9,7 @@ const styles: Record<Variant, string> = {
 }
 
 const labels: Record<Variant, string> = {
-  verified: '✓ Verified',
+  verified: '✓ Approved',
   review:   'Review Math',
   pending:  'Pending',
 }

@@ -9,7 +9,7 @@ interface AllReceiptsProps {
   onOpenReceipt: (id: number) => void
 }
 
-const STATUS_FILTERS = ['All', 'Verified', 'Pending'] as const
+const STATUS_FILTERS = ['All', 'Approved', 'Pending'] as const
 type StatusFilter = typeof STATUS_FILTERS[number]
 
 export function AllReceipts({ onOpenReceipt }: AllReceiptsProps) {
@@ -24,7 +24,7 @@ export function AllReceipts({ onOpenReceipt }: AllReceiptsProps) {
       r.receipt_date?.includes(search)
     const matchStatus =
       status === 'All' ||
-      (status === 'Verified' && r.status === 'verified') ||
+      (status === 'Approved' && r.status === 'verified') ||
       (status === 'Pending'  && r.status !== 'verified')
     return matchSearch && matchStatus
   })

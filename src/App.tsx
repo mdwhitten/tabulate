@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppShell } from './components/layout/AppShell'
 import type { AppShellRef } from './components/layout/AppShell'
 import { Dashboard } from './pages/Dashboard'
@@ -14,7 +14,7 @@ import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
 import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import type { Receipt, SaveReceiptBody } from './types'
-import { ArrowLeft, Save, Camera } from 'lucide-react'
+import { ArrowLeft, Save, Camera, CheckCircle } from 'lucide-react'
 import './index.css'
 
 // ── Ingress-aware URL helpers ─────────────────────────────────────────────────
@@ -89,6 +89,30 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: Re
   const save   = useSaveReceipt(receiptId)
   const del    = useDeleteReceipt()
 
+  // Build a Receipt-compatible object from ProcessingResult if fresh
+  // Memoize so the reference is stable (prevents unnecessary resets in ReviewReceipt)
+  // Must be before early returns to satisfy Rules of Hooks
+  const receipt: Receipt | null = useMemo(() => {
+    if (freshResult) {
+      return {
+        id: freshResult.receipt_id,
+        store_name: freshResult.store_name,
+        receipt_date: freshResult.receipt_date,
+        scanned_at: new Date().toISOString(),
+        status: 'pending' as const,
+        total: freshResult.total,
+        tax: freshResult.tax,
+        total_verified: freshResult.total_verified,
+        verification_message: freshResult.verification_message,
+        ocr_raw: freshResult.ocr_raw,
+        image_path: null,
+        thumbnail_path: freshResult.thumbnail_path,
+        items: freshResult.items,
+      }
+    }
+    return fetchedReceipt ?? null
+  }, [freshResult, fetchedReceipt])
+
   if (!freshResult && isLoading) {
     return (
       <div className="flex items-center justify-center py-32 text-gray-400 text-sm">
@@ -105,28 +129,12 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: Re
     )
   }
 
-  // Build a Receipt-compatible object from ProcessingResult if fresh
-  const receipt: Receipt = freshResult
-    ? {
-        id: freshResult.receipt_id,
-        store_name: freshResult.store_name,
-        receipt_date: freshResult.receipt_date,
-        scanned_at: new Date().toISOString(),
-        status: 'pending',
-        total: freshResult.total,
-        tax: freshResult.tax,
-        total_verified: freshResult.total_verified,
-        verification_message: freshResult.verification_message,
-        ocr_raw: freshResult.ocr_raw,
-        image_path: null,
-        thumbnail_path: freshResult.thumbnail_path,
-        items: freshResult.items,
-      }
-    : fetchedReceipt!
-
   async function handleSave(body: SaveReceiptBody) {
     await save.mutateAsync(body)
-    onSaved()
+    if (body.approve) {
+      onSaved()
+    }
+    // Draft save: stay on page — React Query invalidation refreshes data
   }
 
   async function handleDelete() {
@@ -137,7 +145,7 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: Re
 
   return (
     <ReviewReceipt
-      receipt={receipt}
+      receipt={receipt!}
       isFreshUpload={freshResult != null}
       categories={categories}
       onSave={handleSave}
@@ -159,16 +167,36 @@ export default function App() {
 
   const { page, receiptId } = route
 
+  /** Check whether ReviewReceipt has unsaved changes; prompt if so. */
+  const confirmIfDirty = useCallback((): boolean => {
+    if ((window as any).__tabulate_isDirty) {
+      return window.confirm('You have unsaved changes. Leave without saving?')
+    }
+    return true
+  }, [])
+
   // Push a new history entry and update state
-  const navigate = useCallback((newPage: Page, newReceiptId?: number | null) => {
+  const navigate = useCallback((newPage: Page, newReceiptId?: number | null, { skipGuard = false } = {}) => {
+    if (!skipGuard && !confirmIfDirty()) return
     const newId = newReceiptId ?? null
     window.history.pushState({ page: newPage, receiptId: newId }, '', pageToPath(newPage, newId))
     setRoute({ page: newPage, receiptId: newId })
-  }, [])
+  }, [confirmIfDirty])
 
   // Browser back / forward
   useEffect(() => {
     function onPopState(e: PopStateEvent) {
+      if ((window as any).__tabulate_isDirty) {
+        if (!window.confirm('You have unsaved changes. Leave without saving?')) {
+          // Re-push the current route to undo the back/forward
+          window.history.pushState(
+            { page, receiptId },
+            '',
+            pageToPath(page, receiptId)
+          )
+          return
+        }
+      }
       setRoute(e.state?.page
         ? { page: e.state.page, receiptId: e.state.receiptId ?? null }
         : parseUrl(window.location.pathname))
@@ -176,7 +204,7 @@ export default function App() {
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [])
+  }, [page, receiptId])
 
   // Stamp state onto the initial history entry so popstate fires on first back
   useEffect(() => {
@@ -217,14 +245,16 @@ export default function App() {
           </button>
         ) : undefined}
         topbarRight={isReview ? (
-          <SaveButtonSlot receiptId={receiptId} freshResult={freshResult} />
+          <TopbarReceiptActions receiptId={receiptId} />
         ) : (
           <button
             onClick={() => setUploadOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#03a9f4] text-white text-xs font-semibold rounded-lg hover:bg-[#0290d1] transition-colors shadow-sm shadow-[#03a9f4]/30"
+            title="Scan Receipt"
+            aria-label="Scan Receipt"
+            className="flex items-center gap-1.5 h-9 px-3 bg-[#03a9f4] text-white text-xs font-semibold rounded-lg hover:bg-[#0290d1] transition-colors shadow-sm shadow-[#03a9f4]/30"
           >
-            <Camera className="w-3.5 h-3.5" />
-            Scan Receipt
+            <Camera className="w-4 h-4" />
+            Scan
           </button>
         )}
       >
@@ -242,7 +272,7 @@ export default function App() {
             <ReviewLoader
               receiptId={receiptId}
               freshResult={freshResult}
-              onSaved={() => navigate('receipts')}
+              onSaved={() => navigate('receipts', null, { skipGuard: true })}
               onClose={() => navigate('receipts')}
               onRescan={handleRescan}
             />
@@ -262,26 +292,41 @@ export default function App() {
   )
 }
 
-// ── Topbar Save button ────────────────────────────────────────────────────────
-function SaveButtonSlot({
-  receiptId,
-  freshResult,
-}: {
-  receiptId: number | null
-  freshResult: ProcessingResult | null
-}) {
-  // This is just a visual placeholder; actual save is triggered inside ReviewReceipt
-  // We expose a global trigger via a CustomEvent for simplicity
-  if (!receiptId) return null
-  if (!freshResult) return null   // only show topbar Save for fresh uploads
+// ── Topbar receipt actions (Save + Approve) ──────────────────────────────────
+function TopbarReceiptActions({ receiptId }: { receiptId: number | null }) {
+  const [visible, setVisible] = useState(false)
+  const [dirty, setDirty]     = useState(false)
+
+  useEffect(() => {
+    const poll = () => {
+      const w = window as any
+      setVisible(!!w.__tabulate_isEditable)
+      setDirty(!!w.__tabulate_isDirty)
+    }
+    poll()
+    const id = setInterval(poll, 200)
+    return () => clearInterval(id)
+  }, [receiptId])
+
+  if (!receiptId || !visible) return null
 
   return (
-    <button
-      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#03a9f4] text-white text-xs font-semibold rounded-lg hover:bg-[#0290d1] transition-colors shadow-sm shadow-[#03a9f4]/30"
-      onClick={() => window.dispatchEvent(new CustomEvent('tabulate:save-receipt'))}
-    >
-      <Save className="w-3.5 h-3.5" />
-      Save
-    </button>
+    <div className="flex items-center gap-2">
+      <button
+        disabled={!dirty}
+        className="flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg border transition-colors text-gray-700 bg-white border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={() => window.dispatchEvent(new CustomEvent('tabulate:save-receipt'))}
+      >
+        <Save className="w-4 h-4" />
+        Save
+      </button>
+      <button
+        className="flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg transition-colors text-white bg-green-600 hover:bg-green-700 shadow-sm shadow-green-600/30"
+        onClick={() => window.dispatchEvent(new CustomEvent('tabulate:approve-receipt'))}
+      >
+        <CheckCircle className="w-4 h-4" />
+        Approve
+      </button>
+    </div>
   )
 }

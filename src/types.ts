@@ -82,6 +82,7 @@ export interface SaveReceiptBody {
   store_name: string | null
   new_items: NewLineItemBody[]
   deleted_item_ids: number[]
+  approve?: boolean
 }
 
 export type Page = 'dashboard' | 'receipts' | 'trends' | 'categories' | 'learned' | 'review'

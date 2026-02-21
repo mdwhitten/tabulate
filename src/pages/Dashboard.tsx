@@ -71,7 +71,7 @@ export function Dashboard({ onNavigate, onOpenReceipt }: DashboardProps) {
         <StatCard
           eyebrow="Receipts"
           value={String(summary?.receipt_count ?? receipts.length)}
-          sub={`${pendingCount} pending review`}
+          sub={`${pendingCount} pending approval`}
           icon="🧾"
         />
         <StatCard

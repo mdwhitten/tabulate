@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { CalendarDays, Store, X, RotateCcw, Save, Trash2 } from 'lucide-react'
+import { CalendarDays, Store, X, RotateCcw, Save, Trash2, CheckCircle } from 'lucide-react'
 import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
@@ -28,6 +28,7 @@ type ReviewAction =
   | { type: 'SET_NAME';        itemId: number; name: string }
   | { type: 'DELETE_ITEM';     itemId: number }
   | { type: 'SET_MANUAL_TOTAL'; total: number | null }
+  | { type: 'RESET';           receipt: Receipt }
 
 function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
   switch (action.type) {
@@ -68,6 +69,15 @@ function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
     }
     case 'SET_MANUAL_TOTAL':
       return { ...state, manualTotal: action.total }
+    case 'RESET':
+      return {
+        items:               action.receipt.items,
+        categoryCorrections: {},
+        priceCorrections:    {},
+        nameCorrections:     {},
+        deletedItemIds:      new Set<number>(),
+        manualTotal:         action.receipt.total ?? null,
+      }
     default:
       return state
   }
@@ -116,12 +126,63 @@ export function ReviewReceipt({
   const [dateError, setDateError]       = useState(false)
   const dateInputRef = useRef<HTMLInputElement>(null)
 
-  // Expose save to topbar via CustomEvent
-  const handleSaveRef = useRef<(() => Promise<void>) | null>(null)
+  // Reset local state when the receipt prop changes (e.g. after draft save refetch)
+  const prevReceiptRef = useRef(receipt)
   useEffect(() => {
-    const handler = () => { handleSaveRef.current?.().catch(console.error) }
-    window.addEventListener('tabulate:save-receipt', handler)
-    return () => window.removeEventListener('tabulate:save-receipt', handler)
+    if (prevReceiptRef.current !== receipt) {
+      prevReceiptRef.current = receipt
+      dispatch({ type: 'RESET', receipt })
+      setLocalItems([])
+      setStoreName(receipt.store_name ?? '')
+      setReceiptDate(receipt.receipt_date ?? '')
+    }
+  }, [receipt])
+
+  // ── Dirty tracking ──────────────────────────────────────────────────────
+
+  const isDirty = useMemo(() => {
+    if (isVerified) return false
+    return (
+      Object.keys(state.categoryCorrections).length > 0 ||
+      Object.keys(state.priceCorrections).length > 0 ||
+      Object.keys(state.nameCorrections).length > 0 ||
+      state.deletedItemIds.size > 0 ||
+      localItems.length > 0 ||
+      storeName !== (receipt.store_name ?? '') ||
+      receiptDate !== (receipt.receipt_date ?? '')
+    )
+  }, [isVerified, state, localItems, storeName, receiptDate, receipt])
+
+  // Warn on browser refresh / close when there are unsaved edits
+  useEffect(() => {
+    if (!isDirty) return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [isDirty])
+
+  // Expose dirty + editable state so App.tsx can guard navigation / show Save
+  useEffect(() => {
+    const w = window as any
+    w.__tabulate_isDirty = isDirty
+    w.__tabulate_isEditable = !isVerified
+    return () => {
+      w.__tabulate_isDirty = false
+      w.__tabulate_isEditable = false
+    }
+  }, [isDirty, isVerified])
+
+  // Expose save/approve to topbar via CustomEvents
+  const handleSaveRef = useRef<((approve: boolean) => Promise<void>) | null>(null)
+  useEffect(() => {
+    const onSaveEvent   = () => { handleSaveRef.current?.(false).catch(console.error) }
+    const onApproveEvent = () => { handleSaveRef.current?.(true).catch(console.error) }
+    window.addEventListener('tabulate:save-receipt', onSaveEvent)
+    window.addEventListener('tabulate:approve-receipt', onApproveEvent)
+    return () => {
+      window.removeEventListener('tabulate:save-receipt', onSaveEvent)
+      window.removeEventListener('tabulate:approve-receipt', onApproveEvent)
+    }
   }, [])
 
   // ── Derived verification ─────────────────────────────────────────────────
@@ -139,22 +200,22 @@ export function ReviewReceipt({
     if (receipt.total_verified && Object.keys(state.priceCorrections).length === 0
         && state.deletedItemIds.size === 0 && localItems.length === 0) {
       return {
-        verifyStatus: 'verified' as const,
-        verifyTitle:  'Total Verified',
+        verifyStatus: 'balanced' as const,
+        verifyTitle:  'Total Balanced',
         verifyDetail: receipt.verification_message ?? `Total: ${fmt(receipt.total ?? 0)}`,
       }
     }
     if (total != null && Math.abs(subtotal + tax - total) < 0.02) {
       return {
-        verifyStatus: 'verified' as const,
-        verifyTitle:  'Total Verified',
+        verifyStatus: 'balanced' as const,
+        verifyTitle:  'Total Balanced',
         verifyDetail: `Items ${fmt(subtotal)} + tax ${fmt(tax)} = ${fmt(total)}`,
       }
     }
     if (total != null) {
       return {
         verifyStatus: 'warn' as const,
-        verifyTitle:  'Total Not Verified',
+        verifyTitle:  'Total Mismatch',
         verifyDetail: `Items ${fmt(subtotal)} + tax ${fmt(tax)} = ${fmt(subtotal + tax)}  (receipt: ${fmt(total)})`,
       }
     }
@@ -195,7 +256,7 @@ export function ReviewReceipt({
     setLocalItems(prev => prev.filter(it => it._tempId !== tempId))
   }, [])
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (approve: boolean) => {
     if (!onSave) return
     // Require a date before saving
     if (!receiptDate) {
@@ -220,6 +281,7 @@ export function ReviewReceipt({
         store_name:      storeName   || null,
         new_items:       localItems.map(({ name, price, category }) => ({ name, price, category })),
         deleted_item_ids: Array.from(state.deletedItemIds),
+        approve,
       })
     } finally {
       setSaving(false)
@@ -245,8 +307,8 @@ export function ReviewReceipt({
         difference={total != null ? total - subtotal - tax : undefined}
         onAddDifference={!isVerified && verifyStatus === 'warn'
           ? (diff) => {
-              const rounded = Math.round(Math.abs(diff) * 100) / 100
-              if (rounded >= 0.01) {
+              const rounded = Math.round(diff * 100) / 100
+              if (Math.abs(rounded) >= 0.01) {
                 handleAddItem({ name: 'Adjustment', price: rounded, category: 'Other' })
               }
             }
@@ -284,8 +346,8 @@ export function ReviewReceipt({
               </div>
             </div>
             <Badge variant={
-              verifyStatus === 'verified' ? 'verified'
-              : isVerified ? 'verified'
+              isVerified ? 'verified'
+              : verifyStatus === 'balanced' ? 'pending'
               : 'review'
             } />
           </div>
@@ -350,11 +412,18 @@ export function ReviewReceipt({
               )}
             </div>
             {!isVerified && (
-              <button onClick={handleSave} disabled={saving}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#03a9f4] rounded-lg hover:bg-[#0290d1] disabled:opacity-50 transition-colors shadow-sm">
-                <Save className="w-3.5 h-3.5" />
-                {saving ? 'Saving…' : 'Save Receipt'}
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => handleSave(false)} disabled={!isDirty || saving}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                  <Save className="w-3.5 h-3.5" />
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => handleSave(true)} disabled={saving}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors shadow-sm">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Approve
+                </button>
+              </div>
             )}
           </div>
         </div>

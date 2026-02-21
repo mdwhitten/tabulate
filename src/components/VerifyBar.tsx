@@ -1,8 +1,8 @@
-import { CheckCircle, AlertTriangle, AlertCircle, Plus } from 'lucide-react'
+import { CheckCircle, AlertTriangle, AlertCircle, Plus, Minus } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { fmt } from '../lib/utils'
 
-type Status = 'verified' | 'warn' | 'fail'
+type Status = 'balanced' | 'warn' | 'fail'
 
 interface VerifyBarProps {
   status: Status
@@ -22,7 +22,7 @@ const config: Record<Status, {
   bg: string
   icon: React.ReactNode
 }> = {
-  verified: {
+  balanced: {
     border: 'border-l-green-500',
     bg: 'bg-white',
     icon: <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />,
@@ -56,8 +56,8 @@ export function VerifyBar({ status, title, detail, onManualTotal, manualTotal, o
           onClick={() => onAddDifference(difference)}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors shrink-0"
         >
-          <Plus className="w-3.5 h-3.5" />
-          Add {fmt(Math.abs(difference))} item
+          {difference > 0 ? <Plus className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+          Add {difference > 0 ? '+' : '\u2212'}{fmt(Math.abs(difference))} adjustment
         </button>
       )}
       {status === 'fail' && onManualTotal && (

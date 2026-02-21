@@ -250,6 +250,7 @@ class SaveReceiptBody(BaseModel):
     store_name: Optional[str] = None      # user-edited store name
     new_items: list[NewLineItem] = []     # items added by user
     deleted_item_ids: list[int] = []      # item IDs to remove
+    approve: bool = False                 # True → set status='verified'; False → keep current status
 
 
 @router.post("/{receipt_id}/save")
@@ -259,8 +260,8 @@ async def save_receipt(
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """
-    User has reviewed and corrected categories.
-    Apply corrections, optionally override the total, mark receipt as verified.
+    Apply corrections, optionally override the total.
+    If approve=True, mark receipt as verified (locked). Otherwise keep current status (draft save).
     """
     async with db.execute("SELECT id FROM receipts WHERE id = ?", (receipt_id,)) as cur:
         if not await cur.fetchone():
@@ -304,11 +305,13 @@ async def save_receipt(
         except (ValueError, TypeError):
             pass
 
-    # If the user manually entered the total, store it and mark verified
+    new_status = "'verified'" if body.approve else "status"
+
+    # If the user manually entered the total, store it and update
     if body.manual_total is not None:
         await db.execute(
-            """UPDATE receipts
-               SET status = 'verified',
+            f"""UPDATE receipts
+               SET status = {new_status},
                    total = ?,
                    total_verified = 1,
                    receipt_date = COALESCE(?, receipt_date),
@@ -318,8 +321,8 @@ async def save_receipt(
         )
     else:
         await db.execute(
-            """UPDATE receipts
-               SET status = 'verified',
+            f"""UPDATE receipts
+               SET status = {new_status},
                    receipt_date = COALESCE(?, receipt_date),
                    store_name = COALESCE(?, store_name)
                WHERE id = ?""",
