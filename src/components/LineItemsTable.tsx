@@ -87,7 +87,7 @@ function ItemRow({ item, categories, locked, allowCategoryEdit, onCategoryChange
     >
       {/* Item name */}
       <td className={['px-0 py-0 align-middle', cellSwipeClass].join(' ')}>
-        <div className={['px-2 py-2.5', contentBgClass].join(' ')} style={rowStyle}>
+        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
           {locked ? (
             <p className={['font-medium leading-tight', discount ? 'text-emerald-700' : 'text-gray-900'].join(' ')}>
               {item.clean_name || item.raw_name}
@@ -131,7 +131,7 @@ function ItemRow({ item, categories, locked, allowCategoryEdit, onCategoryChange
 
       {/* Category */}
       <td className={['px-0 py-0 align-middle w-36', cellSwipeClass].join(' ')}>
-        <div className={['px-2 py-2.5', contentBgClass].join(' ')} style={rowStyle}>
+        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
           <CategorySelect
             value={item.category}
             categories={categories}
@@ -143,7 +143,7 @@ function ItemRow({ item, categories, locked, allowCategoryEdit, onCategoryChange
 
       {/* Price — last visible cell gets the trash icon overlay */}
       <td className={['px-0 py-0 align-middle text-right relative', cellSwipeClass].join(' ')}>
-        <div className={['px-2 py-2.5', contentBgClass].join(' ')} style={rowStyle}>
+        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
           <PriceInput
             lineTotal={lineTotal}
             locked={locked}
@@ -164,7 +164,7 @@ function ItemRow({ item, categories, locked, allowCategoryEdit, onCategoryChange
 
       {/* Desktop-only delete button (hidden during swipe and on mobile) */}
       {!locked && (
-        <td className={['px-1 py-2.5 align-middle hidden sm:table-cell', swiping ? 'invisible' : ''].join(' ')}>
+        <td className={['px-2 py-3 align-middle hidden sm:table-cell', swiping ? 'invisible' : ''].join(' ')}>
           <button
             onClick={() => onDeleteItem(item.id)}
             title="Remove item"
@@ -209,7 +209,7 @@ function LocalItemRow({ loc, categories, onLocalItemChange, onDeleteLocal }: Loc
       {...touchHandlers}
     >
       <td className={['px-0 py-0 align-middle', cellSwipeClass].join(' ')}>
-        <div className={['px-2 py-2.5', contentBgClass].join(' ')} style={rowStyle}>
+        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
           <input
             type="text"
             value={loc.name}
@@ -224,7 +224,7 @@ function LocalItemRow({ loc, categories, onLocalItemChange, onDeleteLocal }: Loc
         </div>
       </td>
       <td className={['px-0 py-0 align-middle w-36', cellSwipeClass].join(' ')}>
-        <div className={['px-2 py-2.5', contentBgClass].join(' ')} style={rowStyle}>
+        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
           <CategorySelect
             value={loc.category}
             categories={categories}
@@ -233,7 +233,7 @@ function LocalItemRow({ loc, categories, onLocalItemChange, onDeleteLocal }: Loc
         </div>
       </td>
       <td className={['px-0 py-0 align-middle text-right relative', cellSwipeClass].join(' ')}>
-        <div className={['px-2 py-2.5', contentBgClass].join(' ')} style={rowStyle}>
+        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
           <PriceInput
             lineTotal={loc.price}
             locked={false}
@@ -252,7 +252,7 @@ function LocalItemRow({ loc, categories, onLocalItemChange, onDeleteLocal }: Loc
       </td>
 
       {/* Desktop-only delete button (hidden during swipe) */}
-      <td className={['px-1 py-2.5 align-middle hidden sm:table-cell', swiping ? 'invisible' : ''].join(' ')}>
+      <td className={['px-2 py-3 align-middle hidden sm:table-cell', swiping ? 'invisible' : ''].join(' ')}>
         <button
           onClick={() => onDeleteLocal(loc._tempId)}
           title="Remove item"
@@ -540,17 +540,17 @@ export function LineItemsTable({
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="border-b border-gray-100">
-              <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
+              <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-4 py-2.5">
                 Item
               </th>
-              <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
+              <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-4 py-2.5">
                 Category
               </th>
-              <th className="text-right text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
+              <th className="text-right text-[11px] uppercase tracking-wider text-gray-400 font-medium px-4 py-2.5">
                 Price
               </th>
               {!locked && (
-                <th className="w-6 px-1 py-2" />
+                <th className="w-8 px-2 py-2.5" />
               )}
             </tr>
           </thead>
@@ -583,7 +583,7 @@ export function LineItemsTable({
             {/* Inline add row */}
             {addingRow && (
               <tr className="border-b border-blue-100 bg-blue-50/60">
-                <td className="px-2 py-2 align-middle">
+                <td className="px-4 py-2.5 align-middle">
                   <input
                     ref={nameInputRef}
                     type="text"
@@ -594,14 +594,14 @@ export function LineItemsTable({
                     className="w-full text-sm font-medium text-gray-900 bg-white border border-blue-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
                   />
                 </td>
-                <td className="px-2 py-2 align-middle w-36">
+                <td className="px-4 py-2.5 align-middle w-36">
                   <CategorySelect
                     value={addCat}
                     categories={categories}
                     onChange={setAddCat}
                   />
                 </td>
-                <td className="px-2 py-2 align-middle text-right">
+                <td className="px-4 py-2.5 align-middle text-right">
                   <input
                     type="number"
                     step="0.01"
@@ -612,7 +612,7 @@ export function LineItemsTable({
                     className="w-20 text-sm font-mono text-right text-gray-900 bg-white border border-blue-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
                   />
                 </td>
-                <td className="px-1 py-2 align-middle">
+                <td className="px-2 py-2.5 align-middle">
                   <button onClick={() => setAddingRow(false)} title="Cancel"
                     className="p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all">
                     <Trash2 className="w-3.5 h-3.5" />
@@ -624,7 +624,7 @@ export function LineItemsTable({
           <tfoot>
             {!locked && (
               <tr>
-                <td colSpan={4} className="px-2 py-1.5">
+                <td colSpan={4} className="px-4 py-2">
                   <button
                     onClick={openAddRow}
                     className="flex items-center gap-1.5 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors"
@@ -636,9 +636,9 @@ export function LineItemsTable({
               </tr>
             )}
             <tr className="border-t-2 border-gray-200">
-              <td className="px-2 py-3 font-semibold text-gray-700">Subtotal</td>
+              <td className="px-4 py-3 font-semibold text-gray-700">Subtotal</td>
               <td />
-              <td className="px-2 py-3 text-right font-mono font-semibold text-gray-900 tabular-nums">
+              <td className="px-4 py-3 text-right font-mono font-semibold text-gray-900 tabular-nums">
                 {fmt(subtotal)}
               </td>
               {!locked && <td />}
