@@ -117,7 +117,6 @@ function EmojiPicker({ selected, onSelect, initialOpen = false }: { selected: st
             <input ref={searchRef} type="text" value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search emojis..."
-              autoFocus
               className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]" />
           </div>
           <div className="p-3 pt-2 overflow-y-auto">
