@@ -23,7 +23,8 @@ function niceMax(value: number): number {
   if (value <= 0) return 100
   const magnitude = Math.pow(10, Math.floor(Math.log10(value)))
   const normalized = value / magnitude
-  const niceNorm   = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
+  const steps = [1, 1.5, 2, 3, 4, 5, 6, 8, 10]
+  const niceNorm = steps.find(s => s >= normalized) ?? 10
   return niceNorm * magnitude
 }
 
