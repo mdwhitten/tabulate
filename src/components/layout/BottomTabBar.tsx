@@ -100,7 +100,14 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
               {isOpen && group.pages.length > 1 && (
                 <div
                   ref={popupRef}
-                  className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden min-w-[160px] animate-[fadeUp_150ms_ease-out]"
+                  className={cn(
+                    'absolute bottom-full mb-2 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden min-w-[160px] animate-[fadeUp_150ms_ease-out]',
+                    idx === 0
+                      ? 'left-2'
+                      : idx === TAB_GROUPS.length - 1
+                        ? 'right-2'
+                        : 'left-1/2 -translate-x-1/2'
+                  )}
                 >
                   {group.pages.map(sub => {
                     const subActive = current === sub.id
@@ -141,12 +148,12 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
         })}
 
         {/* Scan FAB-style tab */}
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 relative flex items-center justify-center">
           <button
             onClick={onUpload}
-            className="flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-[#03a9f4] active:text-[#0290d1] transition-colors"
+            className="flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-[#03a9f4] active:text-[#0290d1] transition-colors"
           >
-            <span className="w-8 h-8 rounded-full bg-[#03a9f4] flex items-center justify-center shadow-md shadow-[#03a9f4]/30 -mt-1">
+            <span className="w-8 h-8 rounded-full bg-[#03a9f4] flex items-center justify-center shadow-md shadow-[#03a9f4]/30">
               <Camera className="w-4 h-4 text-white" />
             </span>
             Scan
