@@ -4,8 +4,9 @@ import type { NewLineItemBody } from '../types'
 import { CategorySelect } from './CategorySelect'
 import { PriceInput } from './PriceInput'
 import { SourceTag } from './SourceTag'
-import { fmt } from '../lib/utils'
-import { Plus, Trash2, Tag } from 'lucide-react'
+import { EditItemModal } from './EditItemModal'
+import { catColor, catIcon, fmt } from '../lib/utils'
+import { ChevronRight, Plus, Trash2, Tag } from 'lucide-react'
 import { useSwipeToDelete } from '../hooks/useSwipeToDelete'
 
 /** A locally-created item (not yet saved) has a negative temp id */
@@ -265,6 +266,177 @@ function LocalItemRow({ loc, categories, onLocalItemChange, onDeleteLocal }: Loc
 }
 
 
+// ── Mobile read-only card for DB items ─────────────────────────────────────
+
+interface MobileItemCardProps {
+  item: LineItem
+  categories: Category[]
+  locked: boolean
+  onTap: () => void
+  onDeleteItem: (id: number) => void
+}
+
+function MobileItemCard({ item, categories, locked, onTap, onDeleteItem }: MobileItemCardProps) {
+  const { touchHandlers, rowStyle, isPastThreshold, offset } = useSwipeToDelete({
+    onDelete: () => onDeleteItem(item.id),
+    disabled: locked,
+  })
+  const discount = isDiscount(item)
+  const lineTotal = item.price * item.quantity
+  const icon = catIcon(item.category, categories)
+  const color = catColor(item.category, categories)
+  const swiping = offset < -5
+
+  return (
+    <div
+      className={[
+        'relative border-b border-gray-100 overflow-hidden',
+        swiping ? (isPastThreshold ? 'bg-red-500' : 'bg-red-400') : '',
+      ].join(' ')}
+      {...touchHandlers}
+    >
+      <div
+        className={[
+          'flex items-center gap-3 px-3 py-3 active:bg-gray-50 transition-colors',
+          discount ? 'bg-emerald-50/60' : 'bg-white',
+        ].join(' ')}
+        style={rowStyle}
+        onClick={() => { if (!swiping) onTap() }}
+      >
+        {/* Category color dot */}
+        <div
+          className="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
+          style={{ backgroundColor: color + '18' }}
+        >
+          {icon}
+        </div>
+
+        {/* Item info */}
+        <div className="flex-1 min-w-0">
+          <p className={[
+            'font-medium text-sm leading-tight truncate',
+            discount ? 'text-emerald-700' : 'text-gray-900',
+          ].join(' ')}>
+            {item.clean_name || item.raw_name}
+          </p>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="text-xs text-gray-400 truncate">{item.category}</span>
+            {discount && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-600 bg-emerald-100 px-1 py-0.5 rounded-full">
+                <Tag className="w-2.5 h-2.5" />
+              </span>
+            )}
+            <SourceTag source={item.category_source} />
+            {item.quantity > 1 && (
+              <span className="text-[10px] text-gray-400 font-mono">x{item.quantity}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Price + chevron */}
+        <div className="flex items-center gap-1 shrink-0">
+          <span className={[
+            'font-mono font-medium text-sm tabular-nums',
+            discount ? 'text-emerald-600' : 'text-gray-900',
+          ].join(' ')}>
+            {discount ? '-' : ''}{fmt(Math.abs(lineTotal))}
+          </span>
+          {!locked && <ChevronRight className="w-4 h-4 text-gray-300" />}
+        </div>
+      </div>
+
+      {/* Swipe-to-delete indicator */}
+      {swiping && (
+        <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+          <Trash2 className={[
+            'w-5 h-5 text-white transition-transform',
+            isPastThreshold ? 'scale-125' : '',
+          ].join(' ')} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ── Mobile read-only card for local (unsaved) items ────────────────────────
+
+interface MobileLocalCardProps {
+  loc: LocalItem
+  categories: Category[]
+  onTap: () => void
+  onDeleteLocal: (tempId: number) => void
+}
+
+function MobileLocalCard({ loc, categories, onTap, onDeleteLocal }: MobileLocalCardProps) {
+  const { touchHandlers, rowStyle, isPastThreshold, offset } = useSwipeToDelete({
+    onDelete: () => onDeleteLocal(loc._tempId),
+  })
+  const negLocal = loc.price < 0
+  const icon = catIcon(loc.category, categories)
+  const color = catColor(loc.category, categories)
+  const swiping = offset < -5
+
+  return (
+    <div
+      className={[
+        'relative border-b border-gray-100 overflow-hidden',
+        swiping ? (isPastThreshold ? 'bg-red-500' : 'bg-red-400') : '',
+      ].join(' ')}
+      {...touchHandlers}
+    >
+      <div
+        className={[
+          'flex items-center gap-3 px-3 py-3 active:bg-gray-50 transition-colors',
+          negLocal ? 'bg-emerald-50/60' : 'bg-blue-50/40',
+        ].join(' ')}
+        style={rowStyle}
+        onClick={() => { if (!swiping) onTap() }}
+      >
+        <div
+          className="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
+          style={{ backgroundColor: color + '18' }}
+        >
+          {icon}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className={[
+            'font-medium text-sm leading-tight truncate',
+            negLocal ? 'text-emerald-700' : 'text-gray-900',
+          ].join(' ')}>
+            {loc.name || 'Unnamed item'}
+          </p>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="text-xs text-gray-400 truncate">{loc.category}</span>
+            <span className="text-[10px] text-blue-500 font-semibold uppercase bg-blue-50 px-1 py-0.5 rounded">new</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <span className={[
+            'font-mono font-medium text-sm tabular-nums',
+            negLocal ? 'text-emerald-600' : 'text-gray-900',
+          ].join(' ')}>
+            {negLocal ? '-' : ''}{fmt(Math.abs(loc.price))}
+          </span>
+          <ChevronRight className="w-4 h-4 text-gray-300" />
+        </div>
+      </div>
+
+      {swiping && (
+        <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+          <Trash2 className={[
+            'w-5 h-5 text-white transition-transform',
+            isPastThreshold ? 'scale-125' : '',
+          ].join(' ')} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 // ── Main table ──────────────────────────────────────────────────────────────
 
 export function LineItemsTable({
@@ -286,6 +458,10 @@ export function LineItemsTable({
         + localItems.reduce((s, i) => s + i.price, 0),
     [items, localItems]
   )
+
+  // Modal state for mobile editing
+  const [editingItem, setEditingItem] = useState<LineItem | null>(null)
+  const [editingLocal, setEditingLocal] = useState<LocalItem | null>(null)
 
   // Inline-add row state
   const [addName, setAddName]   = useState('')
@@ -315,115 +491,183 @@ export function LineItemsTable({
   }
 
   return (
-    <div className="overflow-x-auto overflow-y-visible">
-      <table className="w-full text-sm border-collapse">
-        <thead>
-          <tr className="border-b border-gray-100">
-            <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
-              Item
-            </th>
-            <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
-              Category
-            </th>
-            <th className="text-right text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
-              Price
-            </th>
-            {!locked && (
-              <th className="w-6 px-1 py-2 hidden sm:table-cell" />
-            )}
-          </tr>
-        </thead>
-        <tbody>
+    <>
+      {/* ── Mobile card list (< 640px) ─────────────────────────────────────── */}
+      <div className="sm:hidden">
+        <div className="rounded-xl border border-gray-100 overflow-hidden bg-white">
           {items.map(item => (
-            <ItemRow
+            <MobileItemCard
               key={item.id}
               item={item}
               categories={categories}
               locked={locked}
-              allowCategoryEdit={allowCategoryEdit}
-              onCategoryChange={onCategoryChange}
-              onPriceChange={onPriceChange}
-              onNameChange={onNameChange}
+              onTap={() => { if (!locked) setEditingItem(item) }}
               onDeleteItem={onDeleteItem}
             />
           ))}
 
-          {/* Locally added items (not yet saved) */}
           {localItems.map(loc => (
-            <LocalItemRow
+            <MobileLocalCard
               key={loc._tempId}
               loc={loc}
               categories={categories}
-              onLocalItemChange={onLocalItemChange}
+              onTap={() => setEditingLocal(loc)}
               onDeleteLocal={onDeleteLocal}
             />
           ))}
+        </div>
 
-          {/* Inline add row */}
-          {addingRow && (
-            <tr className="border-b border-blue-100 bg-blue-50/60">
-              <td className="px-2 py-2 align-middle">
-                <input
-                  ref={nameInputRef}
-                  type="text"
-                  value={addName}
-                  onChange={e => setAddName(e.target.value)}
-                  onKeyDown={addRowKeyDown}
-                  placeholder="Item name"
-                  className="w-full text-sm font-medium text-gray-900 bg-white border border-blue-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
-                />
-              </td>
-              <td className="px-2 py-2 align-middle w-36">
-                <CategorySelect
-                  value={addCat}
-                  categories={categories}
-                  onChange={setAddCat}
-                />
-              </td>
-              <td className="px-2 py-2 align-middle text-right">
-                <input
-                  type="number"
-                  step="0.01"
-                  value={addPrice}
-                  onChange={e => setAddPrice(e.target.value)}
-                  onKeyDown={addRowKeyDown}
-                  placeholder="0.00"
-                  className="w-20 text-sm font-mono text-right text-gray-900 bg-white border border-blue-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
-                />
-              </td>
-              <td className="px-1 py-2 align-middle hidden sm:table-cell">
-                <button onClick={() => setAddingRow(false)} title="Cancel"
-                  className="p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all">
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </td>
-            </tr>
-          )}
-        </tbody>
-        <tfoot>
+        {/* Add item + subtotal footer */}
+        <div className="mt-2 space-y-2">
           {!locked && (
-            <tr>
-              <td colSpan={4} className="px-2 py-1.5">
-                <button
-                  onClick={openAddRow}
-                  className="flex items-center gap-1.5 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add item
-                </button>
-              </td>
-            </tr>
+            <button
+              onClick={openAddRow}
+              className="flex items-center gap-1.5 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors px-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add item
+            </button>
           )}
-          <tr className="border-t-2 border-gray-200">
-            <td className="px-2 py-3 font-semibold text-gray-700">Subtotal</td>
-            <td />
-            <td className="px-2 py-3 text-right font-mono font-semibold text-gray-900 tabular-nums">
-              {fmt(subtotal)}
-            </td>
-            {!locked && <td className="hidden sm:table-cell" />}
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+          <div className="flex items-center justify-between px-3 py-3 border-t-2 border-gray-200">
+            <span className="font-semibold text-gray-700">Subtotal</span>
+            <span className="font-mono font-semibold text-gray-900 tabular-nums">{fmt(subtotal)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Desktop table (>= 640px) ───────────────────────────────────────── */}
+      <div className="hidden sm:block overflow-x-auto overflow-y-visible">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="border-b border-gray-100">
+              <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
+                Item
+              </th>
+              <th className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
+                Category
+              </th>
+              <th className="text-right text-[11px] uppercase tracking-wider text-gray-400 font-medium px-2 py-2">
+                Price
+              </th>
+              {!locked && (
+                <th className="w-6 px-1 py-2" />
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                categories={categories}
+                locked={locked}
+                allowCategoryEdit={allowCategoryEdit}
+                onCategoryChange={onCategoryChange}
+                onPriceChange={onPriceChange}
+                onNameChange={onNameChange}
+                onDeleteItem={onDeleteItem}
+              />
+            ))}
+
+            {/* Locally added items (not yet saved) */}
+            {localItems.map(loc => (
+              <LocalItemRow
+                key={loc._tempId}
+                loc={loc}
+                categories={categories}
+                onLocalItemChange={onLocalItemChange}
+                onDeleteLocal={onDeleteLocal}
+              />
+            ))}
+
+            {/* Inline add row */}
+            {addingRow && (
+              <tr className="border-b border-blue-100 bg-blue-50/60">
+                <td className="px-2 py-2 align-middle">
+                  <input
+                    ref={nameInputRef}
+                    type="text"
+                    value={addName}
+                    onChange={e => setAddName(e.target.value)}
+                    onKeyDown={addRowKeyDown}
+                    placeholder="Item name"
+                    className="w-full text-sm font-medium text-gray-900 bg-white border border-blue-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
+                  />
+                </td>
+                <td className="px-2 py-2 align-middle w-36">
+                  <CategorySelect
+                    value={addCat}
+                    categories={categories}
+                    onChange={setAddCat}
+                  />
+                </td>
+                <td className="px-2 py-2 align-middle text-right">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={addPrice}
+                    onChange={e => setAddPrice(e.target.value)}
+                    onKeyDown={addRowKeyDown}
+                    placeholder="0.00"
+                    className="w-20 text-sm font-mono text-right text-gray-900 bg-white border border-blue-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
+                  />
+                </td>
+                <td className="px-1 py-2 align-middle">
+                  <button onClick={() => setAddingRow(false)} title="Cancel"
+                    className="p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </td>
+              </tr>
+            )}
+          </tbody>
+          <tfoot>
+            {!locked && (
+              <tr>
+                <td colSpan={4} className="px-2 py-1.5">
+                  <button
+                    onClick={openAddRow}
+                    className="flex items-center gap-1.5 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add item
+                  </button>
+                </td>
+              </tr>
+            )}
+            <tr className="border-t-2 border-gray-200">
+              <td className="px-2 py-3 font-semibold text-gray-700">Subtotal</td>
+              <td />
+              <td className="px-2 py-3 text-right font-mono font-semibold text-gray-900 tabular-nums">
+                {fmt(subtotal)}
+              </td>
+              {!locked && <td />}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* ── Edit modal (mobile) ────────────────────────────────────────────── */}
+      {editingItem && (
+        <EditItemModal
+          item={editingItem}
+          categories={categories}
+          onNameChange={onNameChange}
+          onCategoryChange={onCategoryChange}
+          onPriceChange={(id, unitPrice) => onPriceChange(id, unitPrice)}
+          onDeleteItem={onDeleteItem}
+          onClose={() => setEditingItem(null)}
+        />
+      )}
+      {editingLocal && (
+        <EditItemModal
+          localItem={editingLocal}
+          categories={categories}
+          onLocalItemChange={onLocalItemChange}
+          onDeleteLocal={onDeleteLocal}
+          onClose={() => setEditingLocal(null)}
+        />
+      )}
+    </>
   )
 }
