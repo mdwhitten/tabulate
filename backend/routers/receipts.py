@@ -366,7 +366,7 @@ async def list_receipts(
             FROM receipts r
             LEFT JOIN line_items li ON li.receipt_id = r.id
             GROUP BY r.id
-            ORDER BY r.scanned_at DESC
+            ORDER BY COALESCE(r.receipt_date, r.scanned_at) DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
