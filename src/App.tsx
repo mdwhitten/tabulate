@@ -13,6 +13,7 @@ import { useCategoryList } from './hooks/useCategories'
 import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
 import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
+import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
 import type { Receipt, SaveReceiptBody } from './types'
 import { ArrowLeft, Save, Camera, CheckCircle } from 'lucide-react'
 import './index.css'
@@ -130,6 +131,32 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: Re
   }
 
   async function handleSave(body: SaveReceiptBody) {
+    // If the upload was missing total or date, the user filled them in during
+    // review — check for duplicates now (upload-time check was skipped).
+    const uploadHadBoth = freshResult != null
+      && freshResult.total != null
+      && freshResult.receipt_date != null
+    if (!uploadHadBoth) {
+      const total = body.manual_total ?? receipt?.total ?? null
+      const date = body.receipt_date ?? receipt?.receipt_date ?? null
+      if (total != null && date) {
+        try {
+          const dupes = await checkDuplicates(total, date, receiptId)
+          if (dupes.length > 0) {
+            const dupeList = dupes
+              .map(d => `  - ${d.store_name} on ${d.receipt_date} ($${d.total?.toFixed(2)}) [${d.status}]`)
+              .join('\n')
+            const ok = window.confirm(
+              `Possible duplicate receipt found:\n\n${dupeList}\n\nAnother receipt with the same total and date already exists. Save anyway?`
+            )
+            if (!ok) return
+          }
+        } catch {
+          // If the check fails, don't block the save
+        }
+      }
+    }
+
     await save.mutateAsync(body)
     if (body.approve) {
       onSaved()
@@ -213,9 +240,32 @@ export default function App() {
 
   function openReceipt(id: number) { setFreshResult(null); navigate('review', id) }
 
-  function handleUploadSuccess(result: ProcessingResult) {
+  async function handleUploadSuccess(result: ProcessingResult) {
     setUploadOpen(false)
     shellRef.current?.closeSidebar()   // close mobile sidebar so review is visible
+
+    // If OCR extracted both total and date, check for duplicates immediately
+    if (result.total != null && result.receipt_date) {
+      try {
+        const dupes = await checkDuplicates(result.total, result.receipt_date, result.receipt_id)
+        if (dupes.length > 0) {
+          const dupeList = dupes
+            .map(d => `  - ${d.store_name} on ${d.receipt_date} ($${d.total?.toFixed(2)}) [${d.status}]`)
+            .join('\n')
+          const ok = window.confirm(
+            `Possible duplicate receipt found:\n\n${dupeList}\n\nAnother receipt with the same total and date already exists. Continue reviewing?`
+          )
+          if (!ok) {
+            // Discard the newly created receipt
+            try { await deleteReceiptApi(result.receipt_id) } catch { /* ignore */ }
+            return
+          }
+        }
+      } catch {
+        // If the check fails, proceed normally
+      }
+    }
+
     setFreshResult(result)
     navigate('review', result.receipt_id)
   }

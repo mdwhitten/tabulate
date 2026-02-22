@@ -85,4 +85,12 @@ export interface SaveReceiptBody {
   approve?: boolean
 }
 
+export interface DuplicateMatch {
+  id: number
+  store_name: string
+  receipt_date: string | null
+  total: number | null
+  status: string
+}
+
 export type Page = 'dashboard' | 'receipts' | 'trends' | 'categories' | 'learned' | 'review'
