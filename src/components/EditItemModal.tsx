@@ -12,6 +12,8 @@ interface EditItemModalProps {
   /** Unsaved local item being edited */
   localItem?: LocalItem | null
   categories: Category[]
+  /** When true, only category is editable (name, price, delete are disabled) */
+  locked?: boolean
   onNameChange?: (id: number, name: string) => void
   onCategoryChange?: (id: number, category: string) => void
   onPriceChange?: (id: number, unitPrice: number) => void
@@ -25,6 +27,7 @@ export function EditItemModal({
   item,
   localItem,
   categories,
+  locked = false,
   onNameChange,
   onCategoryChange,
   onPriceChange,
@@ -55,9 +58,9 @@ export function EditItemModal({
     return () => { document.body.style.overflow = '' }
   }, [])
 
-  // Focus name input on mount
+  // Focus name input on mount (skip when locked since it's disabled)
   useEffect(() => {
-    setTimeout(() => nameRef.current?.focus(), 100)
+    if (!locked) setTimeout(() => nameRef.current?.focus(), 100)
   }, [])
 
   function handleDone() {
@@ -139,7 +142,11 @@ export function EditItemModal({
               value={name}
               onChange={e => setName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleDone() }}
-              className="w-full text-base font-medium text-gray-900 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-300 focus:border-transparent transition-shadow"
+              disabled={locked}
+              className={[
+                'w-full text-base font-medium text-gray-900 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-300 focus:border-transparent transition-shadow',
+                locked ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : '',
+              ].join(' ')}
             />
             {rawName && (
               <p className="text-xs text-gray-400 font-mono mt-1.5 px-1">
@@ -192,7 +199,11 @@ export function EditItemModal({
                     if (!isNaN(n) && n >= 0) setPriceStr(n.toFixed(2))
                   }}
                   onKeyDown={e => { if (e.key === 'Enter') handleDone() }}
-                  className="w-24 px-3 py-3 text-base font-mono font-medium text-right bg-white outline-none tabular-nums"
+                  disabled={locked}
+                  className={[
+                    'w-24 px-3 py-3 text-base font-mono font-medium text-right outline-none tabular-nums',
+                    locked ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : 'bg-white',
+                  ].join(' ')}
                 />
               </div>
               {quantity > 1 && (
@@ -212,13 +223,15 @@ export function EditItemModal({
           >
             Done
           </button>
-          <button
-            onClick={handleDelete}
-            className="w-full flex items-center justify-center gap-2 py-2.5 text-red-500 text-sm font-medium hover:bg-red-50 rounded-xl transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-            Delete item
-          </button>
+          {!locked && (
+            <button
+              onClick={handleDelete}
+              className="w-full flex items-center justify-center gap-2 py-2.5 text-red-500 text-sm font-medium hover:bg-red-50 rounded-xl transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete item
+            </button>
+          )}
         </div>
       </div>
     </div>
