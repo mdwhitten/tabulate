@@ -166,13 +166,12 @@ export function EditItemModal({
             <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
               Category
             </label>
-            <div className="[&_select]:!text-base [&_select]:!py-3 [&_select]:!rounded-xl">
-              <CategorySelect
-                value={category}
-                categories={categories}
-                onChange={setCategory}
-              />
-            </div>
+            <CategorySelect
+              value={category}
+              categories={categories}
+              onChange={setCategory}
+              size="lg"
+            />
           </div>
 
           {/* Price */}
