@@ -218,6 +218,7 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
 interface BreakdownEntry {
   category:  string
   amount:    number
+  avgAmount: number
   sharePct:  number
   changePct: number | null
 }
@@ -225,16 +226,28 @@ interface BreakdownEntry {
 interface BreakdownProps {
   month:     MonthSummary
   prevMonth: MonthSummary | null
+  allMonths: MonthSummary[]
   selIdx:    number
   cats?:     Category[]
 }
 
-function MonthBreakdown({ month, prevMonth, selIdx, cats }: BreakdownProps) {
+function MonthBreakdown({ month, prevMonth, allMonths, selIdx, cats }: BreakdownProps) {
   const entries = useMemo<BreakdownEntry[]>(() => {
     const allCats = new Set([
       ...Object.keys(month.by_category),
       ...(prevMonth ? Object.keys(prevMonth.by_category) : []),
     ])
+
+    // Compute average per category across all months
+    const catAvg: Record<string, number> = {}
+    for (const cat of allCats) {
+      let sum = 0, count = 0
+      for (const m of allMonths) {
+        const val = m.by_category[cat] ?? 0
+        if (val > 0) { sum += val; count++ }
+      }
+      catAvg[cat] = count > 0 ? sum / count : 0
+    }
 
     const rows: BreakdownEntry[] = []
     for (const cat of allCats) {
@@ -244,14 +257,14 @@ function MonthBreakdown({ month, prevMonth, selIdx, cats }: BreakdownProps) {
       const changePct  = prevAmount != null && prevAmount > 0
         ? ((amount - prevAmount) / prevAmount) * 100
         : null
-      rows.push({ category: cat, amount, sharePct: 0, changePct })
+      rows.push({ category: cat, amount, avgAmount: catAvg[cat] ?? 0, sharePct: 0, changePct })
     }
 
     rows.sort((a, b) => b.amount - a.amount)
     const maxAmt = rows.reduce((m, r) => Math.max(m, r.amount), 0)
     for (const r of rows) r.sharePct = maxAmt > 0 ? (r.amount / maxAmt) * 100 : 0
     return rows
-  }, [month, prevMonth])
+  }, [month, prevMonth, allMonths])
 
   return (
     <div key={selIdx} className="space-y-1">
@@ -285,6 +298,10 @@ function MonthBreakdown({ month, prevMonth, selIdx, cats }: BreakdownProps) {
 
             <span className="text-sm font-mono tabular-nums text-gray-800 w-16 text-right shrink-0">
               {isZero ? '—' : fmt(entry.amount)}
+            </span>
+
+            <span className="text-sm font-mono tabular-nums text-gray-400 w-16 text-right shrink-0 hidden sm:inline">
+              {entry.avgAmount > 0 ? fmt(entry.avgAmount) : '—'}
             </span>
 
             <span className={[
@@ -417,11 +434,12 @@ export function Trends() {
 
               <div className="hidden sm:flex items-center gap-3 text-[11px] uppercase tracking-widest font-semibold text-gray-400 pr-1">
                 <span className="w-16 text-right">Amount</span>
+                <span className="w-16 text-right">Avg</span>
                 <span className="w-14 text-right">vs prev</span>
               </div>
             </div>
 
-            <MonthBreakdown month={selectedMonth} prevMonth={prevMonth} selIdx={safeIdx} cats={cats} />
+            <MonthBreakdown month={selectedMonth} prevMonth={prevMonth} allMonths={months} selIdx={safeIdx} cats={cats} />
 
             {prevMonth == null && (
               <p className="mt-3 text-[11px] text-gray-400 text-center">
