@@ -5,6 +5,17 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-02-22
+
+### Added
+- Category picker redesigned as a popover with search, matching the emoji picker style
+- Distinct color palette for custom categories so they don't all default to the same color
+- Mobile modal editor now opens on approved receipts for category editing
+
+### Fixed
+- Docker build switched from npm to yarn to fix silent install failures on Alpine/QEMU
+- Removed autoFocus from emoji picker search input to prevent keyboard pop-up on mobile
+
 ## [1.0.0] - 2026-02-22
 
 ### Added
