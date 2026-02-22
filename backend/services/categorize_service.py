@@ -97,17 +97,30 @@ async def save_mapping(
     raw_name: str,
     category: str,
     source: str = "ai",
+    display_name: str | None = None,
 ):
-    """Upsert a learned mapping back to the DB."""
+    """Upsert a learned mapping back to the DB.
+
+    Source priority: manual > ai.  An 'ai' upsert will never downgrade a
+    'manual' mapping — only a 'manual' upsert can overwrite another manual.
+    """
     key = normalize_key(raw_name)
-    display = raw_name.strip().title()
+    display = display_name or raw_name.strip().title()
     await db.execute(
         """
         INSERT INTO item_mappings (normalized_key, display_name, category, source, times_seen)
         VALUES (?, ?, ?, ?, 1)
         ON CONFLICT(normalized_key) DO UPDATE SET
-            category   = excluded.category,
-            source     = excluded.source,
+            category   = CASE
+                           WHEN excluded.source = 'manual' THEN excluded.category
+                           WHEN item_mappings.source = 'manual' THEN item_mappings.category
+                           ELSE excluded.category
+                         END,
+            source     = CASE
+                           WHEN excluded.source = 'manual' THEN 'manual'
+                           WHEN item_mappings.source = 'manual' THEN 'manual'
+                           ELSE excluded.source
+                         END,
             times_seen = times_seen + 1,
             last_seen  = datetime('now')
         """,
@@ -151,10 +164,10 @@ async def categorize_items(
             category = ai.get("category", "Other")
             confidence = float(ai.get("confidence", 0.7))
 
-            # Collect mapping data for batch upsert
-            name = item.get("clean_name") or item["raw_name"]
-            key = normalize_key(name)
-            display = name.strip().title()
+            # Key on raw_name (consistent with Stage 1 lookup) but
+            # use clean_name for the human-readable display_name.
+            display = (item.get("clean_name") or item["raw_name"]).strip().title()
+            key = normalize_key(item["raw_name"])
             mapping_rows.append((key, display, category, "ai"))
 
             results.append({
@@ -164,14 +177,18 @@ async def categorize_items(
                 "ai_confidence": confidence,
             })
 
-        # Batch-persist all new mappings in one DB call
+        # Batch-persist new mappings — never downgrade manual → ai
         await db.executemany(
             """
             INSERT INTO item_mappings (normalized_key, display_name, category, source, times_seen)
             VALUES (?, ?, ?, ?, 1)
             ON CONFLICT(normalized_key) DO UPDATE SET
-                category   = excluded.category,
-                source     = excluded.source,
+                category   = CASE WHEN item_mappings.source = 'manual'
+                                  THEN item_mappings.category
+                                  ELSE excluded.category END,
+                source     = CASE WHEN item_mappings.source = 'manual'
+                                  THEN 'manual'
+                                  ELSE excluded.source END,
                 times_seen = times_seen + 1,
                 last_seen  = datetime('now')
             """,
@@ -243,11 +260,12 @@ async def apply_manual_correction(
     if not row:
         return
 
-    name = row["clean_name"] or row["raw_name"]
-
     await db.execute(
         "UPDATE line_items SET category = ?, category_source = 'manual', corrected = 1 WHERE id = ?",
         (new_category, item_id),
     )
-    await save_mapping(db, name, new_category, source="manual")
+    # Key on raw_name (consistent with categorize_items Stage 1 lookup);
+    # use clean_name for the human-readable display_name.
+    display = (row["clean_name"] or row["raw_name"]).strip().title()
+    await save_mapping(db, row["raw_name"], new_category, source="manual", display_name=display)
     await db.commit()
