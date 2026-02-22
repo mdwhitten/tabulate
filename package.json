@@ -1,13 +1,16 @@
 {
   "name": "tabulate",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cd backend && python -m pytest -v",
+    "test:frontend": "tsc -b --noEmit"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.0",

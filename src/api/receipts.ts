@@ -1,5 +1,5 @@
 import { apiFetch, apiUrl } from './client'
-import type { Receipt, ReceiptSummary, SaveReceiptBody } from '../types'
+import type { Receipt, ReceiptSummary, SaveReceiptBody, DuplicateMatch } from '../types'
 
 export interface ProcessingResult {
   receipt_id: number
@@ -50,6 +50,20 @@ export async function saveReceipt(
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+export async function checkDuplicates(
+  total: number | null,
+  receiptDate: string | null,
+  excludeId?: number,
+): Promise<DuplicateMatch[]> {
+  if (total == null || !receiptDate) return []
+  const params = new URLSearchParams({
+    total: String(total),
+    receipt_date: receiptDate,
+  })
+  if (excludeId != null) params.set('exclude_id', String(excludeId))
+  return apiFetch<DuplicateMatch[]>(`/receipts/check-duplicates?${params}`)
 }
 
 export async function deleteReceipt(id: number): Promise<void> {

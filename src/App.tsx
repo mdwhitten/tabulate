@@ -8,12 +8,14 @@ import { Trends } from './pages/Trends'
 import { Categories } from './pages/Categories'
 import { LearnedItems } from './pages/LearnedItems'
 import { UploadModal } from './components/UploadModal'
+import { DuplicateWarningModal } from './components/DuplicateWarningModal'
 import { useReceipt } from './hooks/useReceipts'
 import { useCategoryList } from './hooks/useCategories'
 import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
 import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
-import type { Receipt, SaveReceiptBody } from './types'
+import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
+import type { Receipt, SaveReceiptBody, DuplicateMatch } from './types'
 import { ArrowLeft, Save, Camera, CheckCircle } from 'lucide-react'
 import './index.css'
 
@@ -71,6 +73,14 @@ const PAGE_TITLES: Record<Page, string> = {
   review:     'Review Receipt',
 }
 
+// ── Duplicate warning state ───────────────────────────────────────────────────
+
+interface DupeWarning {
+  duplicates: DuplicateMatch[]
+  continueLabel: string
+  resolve: (proceed: boolean) => void
+}
+
 // ── ReviewReceipt loader — handles both fresh upload and reopened receipt ─────
 
 interface ReviewLoaderProps {
@@ -79,9 +89,10 @@ interface ReviewLoaderProps {
   onSaved: () => void
   onClose: () => void
   onRescan: () => void
+  onDupeWarning: (dupes: DuplicateMatch[], continueLabel: string) => Promise<boolean>
 }
 
-function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: ReviewLoaderProps) {
+function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDupeWarning }: ReviewLoaderProps) {
   const { data: fetchedReceipt, isLoading, isError } = useReceipt(
     freshResult ? null : receiptId  // skip fetch when we have fresh data
   )
@@ -130,6 +141,27 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: Re
   }
 
   async function handleSave(body: SaveReceiptBody) {
+    // If the upload was missing total or date, the user filled them in during
+    // review — check for duplicates now (upload-time check was skipped).
+    const uploadHadBoth = freshResult != null
+      && freshResult.total != null
+      && freshResult.receipt_date != null
+    if (!uploadHadBoth) {
+      const total = body.manual_total ?? receipt?.total ?? null
+      const date = body.receipt_date ?? receipt?.receipt_date ?? null
+      if (total != null && date) {
+        try {
+          const dupes = await checkDuplicates(total, date, receiptId)
+          if (dupes.length > 0) {
+            const proceed = await onDupeWarning(dupes, 'Save Anyway')
+            if (!proceed) return
+          }
+        } catch {
+          // If the check fails, don't block the save
+        }
+      }
+    }
+
     await save.mutateAsync(body)
     if (body.approve) {
       onSaved()
@@ -163,9 +195,17 @@ export default function App() {
   const [route, setRoute]             = useState<RouteState>(() => parseUrl(window.location.pathname))
   const [freshResult, setFreshResult] = useState<ProcessingResult | null>(null)
   const [uploadOpen, setUploadOpen]   = useState(false)
+  const [dupeWarning, setDupeWarning] = useState<DupeWarning | null>(null)
   const shellRef = useRef<AppShellRef>(null)
 
   const { page, receiptId } = route
+
+  /** Show the duplicate warning modal and return whether the user chose to proceed. */
+  const showDupeWarning = useCallback((dupes: DuplicateMatch[], continueLabel: string): Promise<boolean> => {
+    return new Promise(resolve => {
+      setDupeWarning({ duplicates: dupes, continueLabel, resolve })
+    })
+  }, [])
 
   /** Check whether ReviewReceipt has unsaved changes; prompt if so. */
   const confirmIfDirty = useCallback((): boolean => {
@@ -213,9 +253,27 @@ export default function App() {
 
   function openReceipt(id: number) { setFreshResult(null); navigate('review', id) }
 
-  function handleUploadSuccess(result: ProcessingResult) {
+  async function handleUploadSuccess(result: ProcessingResult) {
     setUploadOpen(false)
     shellRef.current?.closeSidebar()   // close mobile sidebar so review is visible
+
+    // If OCR extracted both total and date, check for duplicates immediately
+    if (result.total != null && result.receipt_date) {
+      try {
+        const dupes = await checkDuplicates(result.total, result.receipt_date, result.receipt_id)
+        if (dupes.length > 0) {
+          const proceed = await showDupeWarning(dupes, 'Review Anyway')
+          if (!proceed) {
+            // Discard the newly created receipt
+            try { await deleteReceiptApi(result.receipt_id) } catch { /* ignore */ }
+            return
+          }
+        }
+      } catch {
+        // If the check fails, proceed normally
+      }
+    }
+
     setFreshResult(result)
     navigate('review', result.receipt_id)
   }
@@ -276,6 +334,7 @@ export default function App() {
               onSaved={() => navigate('receipts', null, { skipGuard: true })}
               onClose={() => navigate('receipts')}
               onRescan={handleRescan}
+              onDupeWarning={showDupeWarning}
             />
           )}
 
@@ -288,6 +347,15 @@ export default function App() {
 
       {uploadOpen && (
         <UploadModal onClose={() => setUploadOpen(false)} onSuccess={handleUploadSuccess} />
+      )}
+
+      {dupeWarning && (
+        <DuplicateWarningModal
+          duplicates={dupeWarning.duplicates}
+          continueLabel={dupeWarning.continueLabel}
+          onContinue={() => { dupeWarning.resolve(true); setDupeWarning(null) }}
+          onCancel={() => { dupeWarning.resolve(false); setDupeWarning(null) }}
+        />
       )}
     </>
   )

@@ -234,6 +234,58 @@ async def upload_receipt(
     )
 
 
+# ── Duplicate Detection ───────────────────────────────────────────────────────
+
+class DuplicateMatch(BaseModel):
+    id: int
+    store_name: str
+    receipt_date: Optional[str]
+    total: Optional[float]
+    status: str
+
+@router.get("/check-duplicates", response_model=list[DuplicateMatch])
+async def check_duplicates(
+    total: Optional[float] = None,
+    receipt_date: Optional[str] = None,
+    exclude_id: Optional[int] = None,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Check for existing receipts that match the given total and date.
+    Returns matching receipts (excluding exclude_id) so the frontend can warn
+    the user before saving a potential duplicate.
+    """
+    if total is None or receipt_date is None:
+        return []
+
+    query = """
+        SELECT id, store_name, receipt_date, total, status
+        FROM receipts
+        WHERE receipt_date = ?
+          AND total IS NOT NULL
+          AND ABS(total - ?) < 0.01
+    """
+    params: list = [receipt_date, total]
+
+    if exclude_id is not None:
+        query += " AND id != ?"
+        params.append(exclude_id)
+
+    async with db.execute(query, params) as cur:
+        rows = await cur.fetchall()
+
+    return [
+        DuplicateMatch(
+            id=row["id"],
+            store_name=row["store_name"] or "Unknown Store",
+            receipt_date=row["receipt_date"],
+            total=row["total"],
+            status=row["status"] or "pending",
+        )
+        for row in rows
+    ]
+
+
 # ── Save (finalize after review) ──────────────────────────────────────────────
 
 class NewLineItem(BaseModel):
