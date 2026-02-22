@@ -142,6 +142,10 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
             segments.push({ cat, y: stackY, h: segH })
           }
 
+          const barTop = stackY
+          const barH   = yBaseline - barTop
+          const clipId = `bar-clip-${colIdx}`
+
           return (
             <g key={colIdx} onClick={() => onSelect(colIdx)} style={{ cursor: 'pointer' }}
               role="button" aria-label={`${month.month_label}: ${fmt(month.total)}`}
@@ -155,27 +159,27 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
               {/* Invisible hit area for whole column */}
               <rect x={x - 8} y={PAD_T} width={BAR_WIDTH + 16} height={barAreaH + PAD_B} fill="transparent" />
 
-              {segments.map(({ cat, y, h }, segIdx) => {
-                const isTop = segIdx === segments.length - 1
-                return (
+              {/* Clip path rounds the entire bar as one unit */}
+              {segments.length > 0 && (
+                <defs>
+                  <clipPath id={clipId}>
+                    <rect x={x} y={barTop} width={BAR_WIDTH} height={barH} rx={4} />
+                  </clipPath>
+                </defs>
+              )}
+
+              <g clipPath={segments.length > 0 ? `url(#${clipId})` : undefined}>
+                {segments.map(({ cat, y, h }) => (
                   <rect
                     key={cat}
                     x={x} y={y} width={BAR_WIDTH} height={Math.max(h, 1)}
-                    fill={catColor(cat, cats)} rx={isTop ? 4 : 0}
+                    fill={catColor(cat, cats)}
                     onMouseEnter={e => handleSegmentEnter(e, cat, month.by_category[cat] ?? 0, month.month_label)}
                     onTouchStart={e => { e.stopPropagation(); handleSegmentEnter(e, cat, month.by_category[cat] ?? 0, month.month_label) }}
                     style={{ cursor: 'pointer' }}
                   />
-                )
-              })}
-
-              {segments.length > 0 && (() => {
-                const bottom = segments[0]
-                return (
-                  <rect key="bottom-round" x={x} y={bottom.y + bottom.h - 4}
-                    width={BAR_WIDTH} height={4} fill={catColor(segments[0].cat, cats)} rx={0} />
-                )
-              })()}
+                ))}
+              </g>
 
               <text x={x + BAR_WIDTH / 2} y={yBaseline + 14} textAnchor="middle" fontSize={11}
                 fontWeight={isSelected ? 700 : 400} fill={isSelected ? '#03a9f4' : '#6b7280'}
