@@ -90,6 +90,7 @@ Each hooks file exports a `*Keys` object (e.g. `receiptKeys`, `categoryKeys`) us
 
 - TypeScript: `./node_modules/.bin/tsc -b && ./node_modules/.bin/vite build` (don't use `npm run build` in Docker — tsc not in PATH)
 - Docker build uses `node:20-alpine` (node:22 had OOM issues with npm)
+- Docker build uses **yarn** instead of npm — npm fails silently under QEMU emulation / Alpine
 - `.dockerignore` excludes `node_modules`, `dist`, `.git`, `.env`
 
 ## Backend Notes

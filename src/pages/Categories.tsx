@@ -8,9 +8,9 @@ import type { Category } from '../types'
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const PRESET_COLORS = [
-  '#2d7a4f', '#c4622d', '#2d5fa0', '#d4a017',
-  '#6b4fa0', '#8a7d6b', '#4a90a4', '#a06b4f',
   '#b04f70', '#4f7ab0', '#7ab04f', '#b08a4f',
+  '#e06060', '#50b090', '#8068c0', '#c08850',
+  '#5898b8', '#a0607a', '#609848', '#d08040',
 ]
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -117,7 +117,6 @@ function EmojiPicker({ selected, onSelect, initialOpen = false }: { selected: st
             <input ref={searchRef} type="text" value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search emojis..."
-              autoFocus
               className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]" />
           </div>
           <div className="p-3 pt-2 overflow-y-auto">

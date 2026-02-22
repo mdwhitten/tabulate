@@ -341,7 +341,7 @@ function MobileItemCard({ item, categories, locked, onTap, onDeleteItem }: Mobil
           ].join(' ')}>
             {discount ? '-' : ''}{fmt(Math.abs(lineTotal))}
           </span>
-          {!locked && <ChevronRight className="w-4 h-4 text-gray-300" />}
+          <ChevronRight className="w-4 h-4 text-gray-300" />
         </div>
       </div>
 
@@ -501,7 +501,7 @@ export function LineItemsTable({
               item={item}
               categories={categories}
               locked={locked}
-              onTap={() => { if (!locked) setEditingItem(item) }}
+              onTap={() => setEditingItem(item)}
               onDeleteItem={onDeleteItem}
             />
           ))}
@@ -652,6 +652,7 @@ export function LineItemsTable({
         <EditItemModal
           item={editingItem}
           categories={categories}
+          locked={locked}
           onNameChange={onNameChange}
           onCategoryChange={onCategoryChange}
           onPriceChange={(id, unitPrice) => onPriceChange(id, unitPrice)}

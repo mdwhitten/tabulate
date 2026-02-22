@@ -3,8 +3,8 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm install --prefer-offline || true
+COPY package.json yarn.lock* package-lock.json* ./
+RUN yarn install --frozen-lockfile --network-timeout 120000
 
 COPY . .
 RUN ./node_modules/.bin/tsc -b && ./node_modules/.bin/vite build
