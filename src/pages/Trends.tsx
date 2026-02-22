@@ -23,7 +23,8 @@ function niceMax(value: number): number {
   if (value <= 0) return 100
   const magnitude = Math.pow(10, Math.floor(Math.log10(value)))
   const normalized = value / magnitude
-  const niceNorm   = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
+  const steps = [1, 1.5, 2, 3, 4, 5, 6, 8, 10]
+  const niceNorm = steps.find(s => s >= normalized) ?? 10
   return niceNorm * magnitude
 }
 
@@ -142,6 +143,10 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
             segments.push({ cat, y: stackY, h: segH })
           }
 
+          const barTop = stackY
+          const barH   = yBaseline - barTop
+          const clipId = `bar-clip-${colIdx}`
+
           return (
             <g key={colIdx} onClick={() => onSelect(colIdx)} style={{ cursor: 'pointer' }}
               role="button" aria-label={`${month.month_label}: ${fmt(month.total)}`}
@@ -155,27 +160,27 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
               {/* Invisible hit area for whole column */}
               <rect x={x - 8} y={PAD_T} width={BAR_WIDTH + 16} height={barAreaH + PAD_B} fill="transparent" />
 
-              {segments.map(({ cat, y, h }, segIdx) => {
-                const isTop = segIdx === segments.length - 1
-                return (
+              {/* Clip path rounds the entire bar as one unit */}
+              {segments.length > 0 && (
+                <defs>
+                  <clipPath id={clipId}>
+                    <rect x={x} y={barTop} width={BAR_WIDTH} height={barH} rx={4} />
+                  </clipPath>
+                </defs>
+              )}
+
+              <g clipPath={segments.length > 0 ? `url(#${clipId})` : undefined}>
+                {segments.map(({ cat, y, h }) => (
                   <rect
                     key={cat}
                     x={x} y={y} width={BAR_WIDTH} height={Math.max(h, 1)}
-                    fill={catColor(cat, cats)} rx={isTop ? 4 : 0}
+                    fill={catColor(cat, cats)}
                     onMouseEnter={e => handleSegmentEnter(e, cat, month.by_category[cat] ?? 0, month.month_label)}
                     onTouchStart={e => { e.stopPropagation(); handleSegmentEnter(e, cat, month.by_category[cat] ?? 0, month.month_label) }}
                     style={{ cursor: 'pointer' }}
                   />
-                )
-              })}
-
-              {segments.length > 0 && (() => {
-                const bottom = segments[0]
-                return (
-                  <rect key="bottom-round" x={x} y={bottom.y + bottom.h - 4}
-                    width={BAR_WIDTH} height={4} fill={catColor(segments[0].cat, cats)} rx={0} />
-                )
-              })()}
+                ))}
+              </g>
 
               <text x={x + BAR_WIDTH / 2} y={yBaseline + 14} textAnchor="middle" fontSize={11}
                 fontWeight={isSelected ? 700 : 400} fill={isSelected ? '#03a9f4' : '#6b7280'}
@@ -218,6 +223,7 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
 interface BreakdownEntry {
   category:  string
   amount:    number
+  avgAmount: number
   sharePct:  number
   changePct: number | null
 }
@@ -225,16 +231,28 @@ interface BreakdownEntry {
 interface BreakdownProps {
   month:     MonthSummary
   prevMonth: MonthSummary | null
+  allMonths: MonthSummary[]
   selIdx:    number
   cats?:     Category[]
 }
 
-function MonthBreakdown({ month, prevMonth, selIdx, cats }: BreakdownProps) {
+function MonthBreakdown({ month, prevMonth, allMonths, selIdx, cats }: BreakdownProps) {
   const entries = useMemo<BreakdownEntry[]>(() => {
     const allCats = new Set([
       ...Object.keys(month.by_category),
       ...(prevMonth ? Object.keys(prevMonth.by_category) : []),
     ])
+
+    // Compute average per category across all months
+    const catAvg: Record<string, number> = {}
+    for (const cat of allCats) {
+      let sum = 0, count = 0
+      for (const m of allMonths) {
+        const val = m.by_category[cat] ?? 0
+        if (val > 0) { sum += val; count++ }
+      }
+      catAvg[cat] = count > 0 ? sum / count : 0
+    }
 
     const rows: BreakdownEntry[] = []
     for (const cat of allCats) {
@@ -244,14 +262,14 @@ function MonthBreakdown({ month, prevMonth, selIdx, cats }: BreakdownProps) {
       const changePct  = prevAmount != null && prevAmount > 0
         ? ((amount - prevAmount) / prevAmount) * 100
         : null
-      rows.push({ category: cat, amount, sharePct: 0, changePct })
+      rows.push({ category: cat, amount, avgAmount: catAvg[cat] ?? 0, sharePct: 0, changePct })
     }
 
     rows.sort((a, b) => b.amount - a.amount)
     const maxAmt = rows.reduce((m, r) => Math.max(m, r.amount), 0)
     for (const r of rows) r.sharePct = maxAmt > 0 ? (r.amount / maxAmt) * 100 : 0
     return rows
-  }, [month, prevMonth])
+  }, [month, prevMonth, allMonths])
 
   return (
     <div key={selIdx} className="space-y-1">
@@ -285,6 +303,10 @@ function MonthBreakdown({ month, prevMonth, selIdx, cats }: BreakdownProps) {
 
             <span className="text-sm font-mono tabular-nums text-gray-800 w-16 text-right shrink-0">
               {isZero ? '—' : fmt(entry.amount)}
+            </span>
+
+            <span className="text-sm font-mono tabular-nums text-gray-400 w-16 text-right shrink-0 hidden sm:inline">
+              {entry.avgAmount > 0 ? fmt(entry.avgAmount) : '—'}
             </span>
 
             <span className={[
@@ -417,11 +439,12 @@ export function Trends() {
 
               <div className="hidden sm:flex items-center gap-3 text-[11px] uppercase tracking-widest font-semibold text-gray-400 pr-1">
                 <span className="w-16 text-right">Amount</span>
+                <span className="w-16 text-right">Avg</span>
                 <span className="w-14 text-right">vs prev</span>
               </div>
             </div>
 
-            <MonthBreakdown month={selectedMonth} prevMonth={prevMonth} selIdx={safeIdx} cats={cats} />
+            <MonthBreakdown month={selectedMonth} prevMonth={prevMonth} allMonths={months} selIdx={safeIdx} cats={cats} />
 
             {prevMonth == null && (
               <p className="mt-3 text-[11px] text-gray-400 text-center">

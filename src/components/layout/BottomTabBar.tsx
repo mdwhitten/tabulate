@@ -18,11 +18,10 @@ interface TabGroup {
 
 const TAB_GROUPS: TabGroup[] = [
   {
-    label: 'Overview',
+    label: 'Dashboard',
     icon: <LayoutDashboard className="w-5 h-5" />,
     pages: [
       { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
-      { id: 'trends',    label: 'Trends',    icon: <TrendingUp       className="w-4 h-4" /> },
     ],
   },
   {
@@ -30,6 +29,13 @@ const TAB_GROUPS: TabGroup[] = [
     icon: <Receipt className="w-5 h-5" />,
     pages: [
       { id: 'receipts', label: 'All Receipts', icon: <Receipt className="w-4 h-4" /> },
+    ],
+  },
+  {
+    label: 'Trends',
+    icon: <TrendingUp className="w-5 h-5" />,
+    pages: [
+      { id: 'trends', label: 'Trends', icon: <TrendingUp className="w-4 h-4" /> },
     ],
   },
   {
@@ -100,7 +106,14 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
               {isOpen && group.pages.length > 1 && (
                 <div
                   ref={popupRef}
-                  className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden min-w-[160px] animate-[fadeUp_150ms_ease-out]"
+                  className={cn(
+                    'absolute bottom-full mb-2 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden min-w-[160px] animate-[fadeUp_150ms_ease-out]',
+                    idx === 0
+                      ? 'left-2'
+                      : idx === TAB_GROUPS.length - 1
+                        ? 'right-2'
+                        : 'left-1/2 -translate-x-1/2'
+                  )}
                 >
                   {group.pages.map(sub => {
                     const subActive = current === sub.id
@@ -112,7 +125,7 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
                           'w-full flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors',
                           subActive
                             ? 'text-[#03a9f4] bg-blue-50/60'
-                            : 'text-gray-700 active:bg-gray-50'
+                            : 'text-gray-700 hover:bg-gray-50 active:bg-gray-100'
                         )}
                       >
                         <span className={subActive ? 'text-[#03a9f4]' : 'text-gray-400'}>{sub.icon}</span>
@@ -127,10 +140,10 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
               <button
                 onClick={() => handleTabClick(idx)}
                 className={cn(
-                  'flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors',
+                  'flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors rounded-lg',
                   active
                     ? 'text-[#03a9f4]'
-                    : 'text-gray-400 active:text-gray-600'
+                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:text-gray-600'
                 )}
               >
                 <span className={active ? 'text-[#03a9f4]' : 'text-gray-400'}>{group.icon}</span>
@@ -141,12 +154,12 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
         })}
 
         {/* Scan FAB-style tab */}
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 relative flex items-center justify-center">
           <button
             onClick={onUpload}
-            className="flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-[#03a9f4] active:text-[#0290d1] transition-colors"
+            className="flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-[#03a9f4] hover:bg-gray-100 active:text-[#0290d1] transition-colors rounded-lg"
           >
-            <span className="w-8 h-8 rounded-full bg-[#03a9f4] flex items-center justify-center shadow-md shadow-[#03a9f4]/30 -mt-1">
+            <span className="w-8 h-8 rounded-full bg-[#03a9f4] flex items-center justify-center shadow-md shadow-[#03a9f4]/30">
               <Camera className="w-4 h-4 text-white" />
             </span>
             Scan
