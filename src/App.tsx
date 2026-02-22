@@ -8,13 +8,14 @@ import { Trends } from './pages/Trends'
 import { Categories } from './pages/Categories'
 import { LearnedItems } from './pages/LearnedItems'
 import { UploadModal } from './components/UploadModal'
+import { DuplicateWarningModal } from './components/DuplicateWarningModal'
 import { useReceipt } from './hooks/useReceipts'
 import { useCategoryList } from './hooks/useCategories'
 import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
 import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
-import type { Receipt, SaveReceiptBody } from './types'
+import type { Receipt, SaveReceiptBody, DuplicateMatch } from './types'
 import { ArrowLeft, Save, Camera, CheckCircle } from 'lucide-react'
 import './index.css'
 
@@ -72,6 +73,14 @@ const PAGE_TITLES: Record<Page, string> = {
   review:     'Review Receipt',
 }
 
+// ── Duplicate warning state ───────────────────────────────────────────────────
+
+interface DupeWarning {
+  duplicates: DuplicateMatch[]
+  continueLabel: string
+  resolve: (proceed: boolean) => void
+}
+
 // ── ReviewReceipt loader — handles both fresh upload and reopened receipt ─────
 
 interface ReviewLoaderProps {
@@ -80,9 +89,10 @@ interface ReviewLoaderProps {
   onSaved: () => void
   onClose: () => void
   onRescan: () => void
+  onDupeWarning: (dupes: DuplicateMatch[], continueLabel: string) => Promise<boolean>
 }
 
-function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: ReviewLoaderProps) {
+function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDupeWarning }: ReviewLoaderProps) {
   const { data: fetchedReceipt, isLoading, isError } = useReceipt(
     freshResult ? null : receiptId  // skip fetch when we have fresh data
   )
@@ -143,13 +153,8 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan }: Re
         try {
           const dupes = await checkDuplicates(total, date, receiptId)
           if (dupes.length > 0) {
-            const dupeList = dupes
-              .map(d => `  - ${d.store_name} on ${d.receipt_date} ($${d.total?.toFixed(2)}) [${d.status}]`)
-              .join('\n')
-            const ok = window.confirm(
-              `Possible duplicate receipt found:\n\n${dupeList}\n\nAnother receipt with the same total and date already exists. Save anyway?`
-            )
-            if (!ok) return
+            const proceed = await onDupeWarning(dupes, 'Save Anyway')
+            if (!proceed) return
           }
         } catch {
           // If the check fails, don't block the save
@@ -190,9 +195,17 @@ export default function App() {
   const [route, setRoute]             = useState<RouteState>(() => parseUrl(window.location.pathname))
   const [freshResult, setFreshResult] = useState<ProcessingResult | null>(null)
   const [uploadOpen, setUploadOpen]   = useState(false)
+  const [dupeWarning, setDupeWarning] = useState<DupeWarning | null>(null)
   const shellRef = useRef<AppShellRef>(null)
 
   const { page, receiptId } = route
+
+  /** Show the duplicate warning modal and return whether the user chose to proceed. */
+  const showDupeWarning = useCallback((dupes: DuplicateMatch[], continueLabel: string): Promise<boolean> => {
+    return new Promise(resolve => {
+      setDupeWarning({ duplicates: dupes, continueLabel, resolve })
+    })
+  }, [])
 
   /** Check whether ReviewReceipt has unsaved changes; prompt if so. */
   const confirmIfDirty = useCallback((): boolean => {
@@ -249,13 +262,8 @@ export default function App() {
       try {
         const dupes = await checkDuplicates(result.total, result.receipt_date, result.receipt_id)
         if (dupes.length > 0) {
-          const dupeList = dupes
-            .map(d => `  - ${d.store_name} on ${d.receipt_date} ($${d.total?.toFixed(2)}) [${d.status}]`)
-            .join('\n')
-          const ok = window.confirm(
-            `Possible duplicate receipt found:\n\n${dupeList}\n\nAnother receipt with the same total and date already exists. Continue reviewing?`
-          )
-          if (!ok) {
+          const proceed = await showDupeWarning(dupes, 'Review Anyway')
+          if (!proceed) {
             // Discard the newly created receipt
             try { await deleteReceiptApi(result.receipt_id) } catch { /* ignore */ }
             return
@@ -326,6 +334,7 @@ export default function App() {
               onSaved={() => navigate('receipts', null, { skipGuard: true })}
               onClose={() => navigate('receipts')}
               onRescan={handleRescan}
+              onDupeWarning={showDupeWarning}
             />
           )}
 
@@ -338,6 +347,15 @@ export default function App() {
 
       {uploadOpen && (
         <UploadModal onClose={() => setUploadOpen(false)} onSuccess={handleUploadSuccess} />
+      )}
+
+      {dupeWarning && (
+        <DuplicateWarningModal
+          duplicates={dupeWarning.duplicates}
+          continueLabel={dupeWarning.continueLabel}
+          onContinue={() => { dupeWarning.resolve(true); setDupeWarning(null) }}
+          onCancel={() => { dupeWarning.resolve(false); setDupeWarning(null) }}
+        />
       )}
     </>
   )
