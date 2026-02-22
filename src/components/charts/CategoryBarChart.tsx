@@ -7,12 +7,13 @@ interface CategoryBarChartProps {
 }
 
 export function CategoryBarChart({ data, categories }: CategoryBarChartProps) {
-  const max = Math.max(...data.map(d => d.amount), 1)
+  const visible = data.filter(d => d.amount >= 5)
+  const max = Math.max(...visible.map(d => d.amount), 1)
   const total = data.reduce((s, d) => s + d.amount, 0)
 
   return (
     <div className="space-y-3">
-      {data.map((d, i) => {
+      {visible.map((d, i) => {
         const pct = (d.amount / max) * 100
         const share = ((d.amount / total) * 100).toFixed(0)
         const color = catColor(d.category, categories)

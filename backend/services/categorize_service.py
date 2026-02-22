@@ -68,15 +68,19 @@ def normalize_key(name: str) -> str:
 def find_best_match(key: str, mappings: dict[str, str]) -> Optional[str]:
     """
     Try to match a normalized key against learned mappings.
-    First exact, then substring match.
+    First exact, then longest substring match (most specific wins).
     """
     if key in mappings:
         return mappings[key]
-    # Try partial matches: if a learned keyword appears in the item key
+    # Try partial matches — collect all and pick the longest (most specific)
+    best_key = ""
+    best_category = None
     for learned_key, category in mappings.items():
         if learned_key in key or key in learned_key:
-            return category
-    return None
+            if len(learned_key) > len(best_key):
+                best_key = learned_key
+                best_category = category
+    return best_category
 
 
 async def load_mappings(db: aiosqlite.Connection) -> dict[str, str]:
