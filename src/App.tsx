@@ -235,6 +235,7 @@ export default function App() {
         onNavigate={p => { setFreshResult(null); navigate(p) }}
         onUpload={() => setUploadOpen(true)}
         topbarTitle={reviewTitle}
+        embedded={!!INGRESS_PREFIX}
         topbarLeft={isReview ? (
           <button
             onClick={() => navigate('receipts')}
@@ -246,7 +247,7 @@ export default function App() {
         ) : undefined}
         topbarRight={isReview ? (
           <TopbarReceiptActions receiptId={receiptId} />
-        ) : (
+        ) : !INGRESS_PREFIX ? (
           <button
             onClick={() => setUploadOpen(true)}
             title="Scan Receipt"
@@ -256,7 +257,7 @@ export default function App() {
             <Camera className="w-4 h-4" />
             Scan
           </button>
-        )}
+        ) : undefined}
       >
         <div key={`${page}-${receiptId}`} className="animate-[fadeUp_200ms_ease-out]">
 
