@@ -1,8 +1,9 @@
 """
 Items Router
 
-PATCH /api/items/{id}/category  — manually correct a line item's category
-GET   /api/items/mappings       — list all learned mappings
+PATCH  /api/items/{id}/category        — manually correct a line item's category
+GET    /api/items/mappings             — list all learned mappings
+DELETE /api/items/mappings/{mapping_id} — delete a learned mapping
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -67,6 +68,23 @@ async def update_mapping_category(
     )
     await db.commit()
     return {"status": "ok", "mapping_id": mapping_id, "category": body.category}
+
+
+@router.delete("/mappings/{mapping_id}")
+async def delete_mapping(
+    mapping_id: int,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Delete a learned mapping rule."""
+    async with db.execute(
+        "SELECT id FROM item_mappings WHERE id = ?", (mapping_id,)
+    ) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Mapping not found")
+
+    await db.execute("DELETE FROM item_mappings WHERE id = ?", (mapping_id,))
+    await db.commit()
+    return {"status": "deleted", "mapping_id": mapping_id}
 
 
 @router.get("/mappings", response_model=PaginatedMappings)

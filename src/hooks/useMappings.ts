@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { listMappings, updateMappingCategory } from '../api/mappings'
+import { listMappings, updateMappingCategory, deleteMapping } from '../api/mappings'
 import type { PaginatedMappings } from '../api/mappings'
 
 export const mappingKeys = {
@@ -26,6 +26,14 @@ export function useUpdateMappingCategory() {
   return useMutation({
     mutationFn: ({ id, category }: { id: number; category: string }) =>
       updateMappingCategory(id, category),
+    onSuccess: () => qc.invalidateQueries({ queryKey: mappingKeys.all() }),
+  })
+}
+
+export function useDeleteMapping() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deleteMapping(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: mappingKeys.all() }),
   })
 }
