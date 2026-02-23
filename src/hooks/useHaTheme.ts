@@ -80,19 +80,13 @@ function applyTheme() {
 /**
  * Read HA theme variables from the parent iframe and apply them.
  * Only active when `enabled` is true (i.e. running inside HA ingress).
- * Re-checks on an interval to pick up live theme changes.
+ * Applies once on mount (page load / refresh). Theme changes in HA
+ * typically mean navigating away from the add-on, so continuous polling
+ * is unnecessary — the fresh theme is picked up on next load.
  */
 export function useHaTheme(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return
-
-    // Apply immediately
     applyTheme()
-
-    // HA themes can change at runtime — re-check periodically.
-    // MutationObserver on the parent is more elegant but flaky across
-    // browsers in same-origin iframes, so a simple poll is more robust.
-    const id = setInterval(applyTheme, 5_000)
-    return () => clearInterval(id)
   }, [enabled])
 }
