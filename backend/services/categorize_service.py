@@ -80,14 +80,28 @@ def find_best_match(key: str, mappings: dict[str, str]) -> Optional[str]:
     """
     Try to match a normalized key against learned mappings.
     First exact, then longest substring match (most specific wins).
+
+    Substring matches require the shorter key to be at least 50% the length
+    of the longer key.  This prevents short generic seeds (e.g. "milk",
+    4 chars) from false-matching long specific items (e.g.
+    "tasteofthaicoconutmilk", 22 chars) while still allowing reasonable
+    fuzzy matches (e.g. "coconutmilk" matching "organiccoconutmilk").
     """
+    if not key:
+        return None
     if key in mappings:
         return mappings[key]
     # Try partial matches — collect all and pick the longest (most specific)
     best_key = ""
     best_category = None
     for learned_key, category in mappings.items():
+        if not learned_key:
+            continue
         if learned_key in key or key in learned_key:
+            shorter = min(len(learned_key), len(key))
+            longer = max(len(learned_key), len(key))
+            if shorter / longer < 0.5:
+                continue  # too dissimilar in length — skip
             if len(learned_key) > len(best_key):
                 best_key = learned_key
                 best_category = category

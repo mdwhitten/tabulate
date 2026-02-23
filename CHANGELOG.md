@@ -5,6 +5,12 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2026-02-23
+
+### Fixed
+- Learned item categorization no longer matches wrong category from short generic seed mappings (e.g. "milk" seed matching "Taste of Thai Coconut Milk")
+- Swipe-to-delete on learned items table now reveals red across the full row width instead of being cramped into a narrow strip
+
 ## [1.2.5] - 2026-02-23
 
 ### Fixed
