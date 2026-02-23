@@ -159,7 +159,7 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
             onClick={onUpload}
             className="flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-[#03a9f4] hover:bg-gray-100 active:text-[#0290d1] transition-colors rounded-lg"
           >
-            <span className="w-8 h-8 rounded-full bg-[#03a9f4] flex items-center justify-center shadow-md shadow-[#03a9f4]/30">
+            <span className="-mt-3 w-8 h-8 rounded-full bg-[#03a9f4] flex items-center justify-center shadow-md shadow-[#03a9f4]/30">
               <Camera className="w-4 h-4 text-white" />
             </span>
             Scan

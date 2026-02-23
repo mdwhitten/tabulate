@@ -439,7 +439,7 @@ export function Trends() {
 
               <div className="hidden sm:flex items-center gap-3 text-[11px] uppercase tracking-widest font-semibold text-gray-400 pr-1">
                 <span className="w-16 text-right">Amount</span>
-                <span className="w-16 text-right">Avg</span>
+                <span className="w-16 text-center">Avg</span>
                 <span className="w-14 text-right">vs prev</span>
               </div>
             </div>
