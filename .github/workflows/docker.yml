@@ -71,3 +71,16 @@ jobs:
           labels: ${{ steps.meta-nginx.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  notify-ha-addon:
+    name: Notify HA add-on repo
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to ha-tabulate
+        run: |
+          gh api repos/mdwhitten/ha-tabulate/dispatches \
+            -f event_type=upstream-release \
+            -f 'client_payload[tag]=${{ github.ref_name }}'
+        env:
+          GH_TOKEN: ${{ secrets.HA_TABULATE_PAT }}
