@@ -53,6 +53,8 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
     const ctx = canvas.getContext('2d')!
     const c   = cornersRef.current
 
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--tab-accent').trim() || '#03a9f4'
+
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
@@ -72,7 +74,7 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
     ctx.moveTo(c[0][0], c[0][1])
     c.forEach(([x, y]) => ctx.lineTo(x, y))
     ctx.closePath()
-    ctx.strokeStyle = '#03a9f4'
+    ctx.strokeStyle = accent
     ctx.lineWidth = 2
     ctx.stroke()
 
@@ -83,13 +85,13 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
       ctx.arc(x, y, HANDLE_R, 0, Math.PI * 2)
       ctx.fillStyle = '#fff'
       ctx.fill()
-      ctx.strokeStyle = '#03a9f4'
+      ctx.strokeStyle = accent
       ctx.lineWidth = 2
       ctx.stroke()
       // inner blue dot
       ctx.beginPath()
       ctx.arc(x, y, HANDLE_R * 0.5, 0, Math.PI * 2)
-      ctx.fillStyle = '#03a9f4'
+      ctx.fillStyle = accent
       ctx.fill()
     })
   }, [])
@@ -254,7 +256,7 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
           {/* Spinner: visible until ready */}
           {!ready && (
             <div className="absolute flex flex-col items-center gap-3 py-16 text-gray-400 pointer-events-none">
-              <Loader2 className="w-8 h-8 animate-spin text-[#03a9f4]" />
+              <Loader2 className="w-8 h-8 animate-spin text-[var(--tab-accent)]" />
               <p className="text-sm">Loading image…</p>
             </div>
           )}
@@ -296,7 +298,7 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
           <button
             onClick={handleConfirm}
             disabled={!ready}
-            className="flex items-center gap-2 px-4 py-2 bg-[#03a9f4] text-white text-sm font-semibold rounded-xl hover:bg-[#0290d1] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--tab-accent)] text-white text-sm font-semibold rounded-xl hover:bg-[var(--tab-accent-hover)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Apply Crop &amp; Scan
           </button>

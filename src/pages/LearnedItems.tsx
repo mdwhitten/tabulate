@@ -67,7 +67,7 @@ export function LearnedItems() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
           <input type="text" placeholder="Search items…" value={search}
             onChange={e => handleSearchChange(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4] transition-all placeholder:text-gray-400" />
+            className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[var(--tab-accent)]/30 focus:border-[var(--tab-accent)] transition-all placeholder:text-gray-400" />
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">

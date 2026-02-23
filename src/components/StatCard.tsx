@@ -17,9 +17,9 @@ export function StatCard({ eyebrow, value, sub, trend, accent, icon, onClick, li
       className={cn(
         'bg-white rounded-2xl p-5 border shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)]',
         accent
-          ? 'border-[#03a9f4]/30 ring-1 ring-[#03a9f4]/15'
+          ? 'border-[var(--tab-accent)]/30 ring-1 ring-[var(--tab-accent)]/15'
           : 'border-gray-100',
-        onClick && 'cursor-pointer hover:border-[#03a9f4]/40 hover:shadow-md transition-all'
+        onClick && 'cursor-pointer hover:border-[var(--tab-accent)]/40 hover:shadow-md transition-all'
       )}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
@@ -32,7 +32,7 @@ export function StatCard({ eyebrow, value, sub, trend, accent, icon, onClick, li
       </div>
       <p className={cn(
         'text-3xl font-semibold tabular-nums font-mono leading-none',
-        accent ? 'text-[#03a9f4]' : 'text-gray-900'
+        accent ? 'text-[var(--tab-accent)]' : 'text-gray-900'
       )}>
         {value}
       </p>
@@ -47,7 +47,7 @@ export function StatCard({ eyebrow, value, sub, trend, accent, icon, onClick, li
         </div>
       )}
       {onClick && linkLabel && (
-        <p className="text-xs text-[#03a9f4] font-medium mt-2">{linkLabel} →</p>
+        <p className="text-xs text-[var(--tab-accent)] font-medium mt-2">{linkLabel} →</p>
       )}
     </div>
   )
