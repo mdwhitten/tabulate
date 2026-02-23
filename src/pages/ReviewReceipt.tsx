@@ -54,7 +54,7 @@ function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
         nameCorrections: { ...state.nameCorrections, [action.itemId]: action.name },
         items: state.items.map(it =>
           it.id === action.itemId
-            ? { ...it, clean_name: action.name, raw_name: action.name }
+            ? { ...it, clean_name: action.name }
             : it
         ),
       }

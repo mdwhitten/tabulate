@@ -334,13 +334,14 @@ async def save_receipt(
             (receipt_id, name, name, price_val, category),
         )
 
-    # Apply name corrections
+    # Apply name corrections — only update clean_name (display); raw_name is the
+    # immutable OCR text used as the mapping key and must never be overwritten.
     for item_id_str, new_name in body.name_corrections.items():
         name = new_name.strip()
         if name:
             await db.execute(
-                "UPDATE line_items SET raw_name = ?, clean_name = ? WHERE id = ? AND receipt_id = ?",
-                (name, name, int(item_id_str), receipt_id),
+                "UPDATE line_items SET clean_name = ? WHERE id = ? AND receipt_id = ?",
+                (name, int(item_id_str), receipt_id),
             )
 
     for item_id_str, new_category in body.corrections.items():

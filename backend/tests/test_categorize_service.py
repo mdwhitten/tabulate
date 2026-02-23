@@ -419,3 +419,70 @@ class TestKeyConsistency:
         lookup_key = normalize_key("ORG ALMND MILK 64OZ")
         matched = find_best_match(lookup_key, mappings)
         assert matched == "Dairy & Eggs"
+
+    @pytest.mark.asyncio
+    async def test_mapping_key_uses_raw_name_not_clean_name_after_edit(self, db):
+        """
+        Bug regression: when clean_name is edited to a friendly name (e.g.
+        "Kirkland Signature Steak Strips") but raw_name remains the OCR text
+        (e.g. "KS STEAKSTRIP"), the mapping key should be based on raw_name.
+        """
+        await db.execute(
+            "INSERT INTO receipts (store_name, total) VALUES (?, ?)",
+            ("Costco", 15.99),
+        )
+        # raw_name = OCR text, clean_name = AI-interpreted display name
+        await db.execute(
+            """INSERT INTO line_items (receipt_id, raw_name, clean_name, price, category, category_source)
+               VALUES (1, 'KS STEAKSTRIP', 'Kirkland Signature Steak Strips', 15.99, 'Other', 'ai')""",
+        )
+        await db.commit()
+
+        async with db.execute("SELECT id FROM line_items LIMIT 1") as cur:
+            item_id = (await cur.fetchone())["id"]
+
+        # Simulate user editing clean_name to a different friendly name
+        await db.execute(
+            "UPDATE line_items SET clean_name = ? WHERE id = ?",
+            ("KS Steak Strips", item_id),
+        )
+        await db.commit()
+
+        # Now apply a manual category correction
+        await apply_manual_correction(db, item_id, "Meat & Seafood")
+
+        # The mapping key must be based on the original raw_name "KS STEAKSTRIP"
+        raw_key = normalize_key("KS STEAKSTRIP")
+        row = await get_mapping(db, raw_key)
+        assert row is not None, "Mapping should be keyed on raw_name, not clean_name"
+        assert row["category"] == "Meat & Seafood"
+
+        # There should be NO mapping keyed on the friendly name
+        friendly_key = normalize_key("Kirkland Signature Steak Strips")
+        friendly_row = await get_mapping(db, friendly_key)
+        assert friendly_row is None, "No mapping should exist for the friendly/display name"
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_mappings_for_abbreviated_and_expanded_names(self, db):
+        """
+        Bug regression: two mappings should NOT be created when the same item
+        appears with both its raw OCR abbreviation and an expanded name.
+        """
+        # First encounter: raw_name is the true OCR text
+        await save_mapping(db, "KS STEAKSTRIP", "Snacks", source="ai",
+                           display_name="Kirkland Signature Steak Strips")
+        await db.commit()
+
+        # Second encounter: same raw OCR text
+        await save_mapping(db, "KS STEAKSTRIP", "Meat & Seafood", source="ai",
+                           display_name="Kirkland Signature Steak Strips")
+        await db.commit()
+
+        # Should have exactly one mapping, not two
+        async with db.execute("SELECT COUNT(*) FROM item_mappings") as cur:
+            count = (await cur.fetchone())[0]
+        assert count == 1
+
+        row = await get_mapping(db, normalize_key("KS STEAKSTRIP"))
+        assert row is not None
+        assert row["times_seen"] == 2
