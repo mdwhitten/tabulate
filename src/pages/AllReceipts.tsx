@@ -94,7 +94,9 @@ export function AllReceipts({ onOpenReceipt }: AllReceiptsProps) {
                 <th className="text-left text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-4 py-3 hidden sm:table-cell">Date</th>
                 <th className="text-center text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-4 py-3 hidden md:table-cell">Items</th>
                 <th className="text-right text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-4 py-3">Total</th>
-                <th className="text-right text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-5 py-3 hidden sm:table-cell">Status</th>
+                <th className="text-right text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-2 sm:px-5 py-3">
+                  <span className="hidden sm:inline">Status</span>
+                </th>
                 <th className="w-10 py-3" />
               </tr>
             </thead>
@@ -166,8 +168,13 @@ function ReceiptTableRow({
           {r.total != null ? fmt(r.total) : '—'}
         </span>
       </td>
-      <td className="px-5 py-3.5 text-right hidden sm:table-cell">
-        <Badge variant={r.status === 'verified' ? 'verified' : r.status === 'review' ? 'review' : 'pending'} />
+      <td className="px-2 sm:px-5 py-3.5 text-right">
+        <span className="sm:hidden">
+          <Badge variant={r.status === 'verified' ? 'verified' : r.status === 'review' ? 'review' : 'pending'} compact />
+        </span>
+        <span className="hidden sm:inline">
+          <Badge variant={r.status === 'verified' ? 'verified' : r.status === 'review' ? 'review' : 'pending'} />
+        </span>
       </td>
       <td className="pr-3 py-3.5 text-right">
         <button

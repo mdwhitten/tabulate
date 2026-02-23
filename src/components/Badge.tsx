@@ -14,7 +14,33 @@ const labels: Record<Variant, string> = {
   pending:  'Pending',
 }
 
-export function Badge({ variant }: { variant: Variant }) {
+const icons: Record<Variant, string> = {
+  verified: '✓',
+  review:   '!',
+  pending:  '·',
+}
+
+const dotColors: Record<Variant, string> = {
+  verified: 'bg-green-500',
+  review:   'bg-orange-400',
+  pending:  'bg-gray-300',
+}
+
+interface BadgeProps {
+  variant: Variant
+  compact?: boolean
+}
+
+export function Badge({ variant, compact }: BadgeProps) {
+  if (compact) {
+    return (
+      <span className={cn('inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold', styles[variant])}
+        title={labels[variant]}>
+        {icons[variant]}
+      </span>
+    )
+  }
+
   return (
     <span className={cn(
       'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide whitespace-nowrap',
