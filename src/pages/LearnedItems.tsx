@@ -119,8 +119,7 @@ export function LearnedItems() {
                 <th className="text-left text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-4 py-3">Category</th>
                 <th className="text-center text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-3 py-3 hidden md:table-cell">Seen</th>
                 <th className="text-left text-[11px] uppercase tracking-widest text-gray-400 font-semibold px-4 py-3 hidden sm:table-cell">Last Seen</th>
-                <th className="w-10 py-3 sm:hidden" />
-                <th className="w-8 py-3 hidden sm:table-cell" />
+                <th className="w-10 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -177,17 +176,14 @@ function LearnedItemRow({ mapping: m, index, categories, onCategoryChange, onDel
   })
 
   const swiping = offset < -5
-  const swipeBg = isPastThreshold ? 'bg-red-500' : 'bg-red-400'
-  const cellSwipeClass = swiping ? swipeBg : ''
-  const contentBgClass = swiping ? 'bg-white' : ''
 
   return (
     <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors group"
       style={{ animationDelay: `${Math.min(index, 9) * 25}ms` }}
       {...touchHandlers}>
 
-      <td className={['px-0 py-0', cellSwipeClass].join(' ')}>
-        <div className={['px-5 py-3', contentBgClass].join(' ')} style={rowStyle}>
+      <td className="px-0 py-0 overflow-hidden">
+        <div className="px-5 py-3" style={rowStyle}>
           <p className="text-sm font-medium text-gray-900 leading-tight">{m.display_name}</p>
           <div className="mt-1">
             <SourceTag source={m.source} />
@@ -195,64 +191,55 @@ function LearnedItemRow({ mapping: m, index, categories, onCategoryChange, onDel
         </div>
       </td>
 
-      <td className={['px-0 py-0 hidden lg:table-cell', cellSwipeClass].join(' ')}>
-        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
+      <td className="px-0 py-0 hidden lg:table-cell overflow-hidden">
+        <div className="px-4 py-3" style={rowStyle}>
           <span className="text-[11px] font-mono text-gray-400 bg-gray-50 border border-gray-100 rounded px-1.5 py-0.5 max-w-[180px] truncate block">
             {m.normalized_key}
           </span>
         </div>
       </td>
 
-      <td className={['px-0 py-0', cellSwipeClass].join(' ')}>
-        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
+      <td className="px-0 py-0 overflow-hidden">
+        <div className="px-4 py-3" style={rowStyle}>
           <CategorySelect value={m.category} categories={categories} onChange={onCategoryChange} />
         </div>
       </td>
 
-      <td className={['px-0 py-0 text-center hidden md:table-cell', cellSwipeClass].join(' ')}>
-        <div className={['px-3 py-3', contentBgClass].join(' ')} style={rowStyle}>
+      <td className="px-0 py-0 text-center hidden md:table-cell overflow-hidden">
+        <div className="px-3 py-3" style={rowStyle}>
           <span className="text-xs font-mono font-medium text-gray-600 bg-gray-100 rounded-full px-2 py-0.5 tabular-nums">
             ×{m.times_seen}
           </span>
         </div>
       </td>
 
-      <td className={['px-0 py-0 hidden sm:table-cell relative', cellSwipeClass].join(' ')}>
-        <div className={['px-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
+      <td className="px-0 py-0 hidden sm:table-cell overflow-hidden">
+        <div className="px-4 py-3" style={rowStyle}>
           <span className="text-xs text-gray-400">{relativeTime(m.last_seen)}</span>
         </div>
-        {swiping && (
-          <div className="absolute inset-y-0 right-2 flex items-center pointer-events-none">
+      </td>
+
+      {/* Delete action — swipe indicator (touch) + hover button (pointer) */}
+      <td className={['px-0 py-0 relative', swiping ? (isPastThreshold ? 'bg-red-500' : 'bg-red-400') : ''].join(' ')}>
+        <div className="w-10" style={rowStyle} />
+        {swiping ? (
+          <div className="absolute inset-y-0 right-1 flex items-center pointer-events-none">
             <Trash2 className={[
               'w-5 h-5 text-white transition-transform',
               isPastThreshold ? 'scale-125' : '',
             ].join(' ')} />
           </div>
-        )}
-      </td>
-
-      <td className={['pr-0 py-0 text-right relative', swiping ? swipeBg : '', 'sm:hidden'].join(' ')}>
-        <div className={['pr-4 py-3', contentBgClass].join(' ')} style={rowStyle}>
-          <span className="w-6 h-6 inline-block" />
-        </div>
-        {swiping && (
-          <div className="absolute inset-y-0 right-2 flex items-center pointer-events-none sm:hidden">
-            <Trash2 className={[
-              'w-5 h-5 text-white transition-transform',
-              isPastThreshold ? 'scale-125' : '',
-            ].join(' ')} />
+        ) : (
+          <div className="absolute inset-y-0 right-1 flex items-center">
+            <button
+              onClick={onDelete}
+              title="Delete rule"
+              className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
-      </td>
-
-      <td className={['px-2 py-0 align-middle hidden sm:table-cell', swiping ? 'invisible' : ''].join(' ')}>
-        <button
-          onClick={onDelete}
-          title="Delete rule"
-          className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-all"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
       </td>
     </tr>
   )
