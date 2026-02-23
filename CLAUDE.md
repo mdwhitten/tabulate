@@ -111,6 +111,15 @@ When asked to prepare a release (e.g. "release v1.3.0"), make all of the followi
 
 CI will validate the PR title is valid semver, CHANGELOG.md has a matching entry, and package.json version matches. On merge, the `release.yml` workflow automatically creates a GitHub release + tag from the changelog, and `docker.yml` builds and pushes the Docker images.
 
+## Home Assistant Add-on
+
+The HA add-on wrapper lives in a separate repo: [mdwhitten/ha-tabulate](https://github.com/mdwhitten/ha-tabulate). When a release is tagged here, `docker.yml` dispatches an `upstream-release` event to `ha-tabulate` so it can update its image references.
+
+This repo handles ingress compatibility directly:
+- `src/api/client.ts` detects the `/api/hassio_ingress/<token>/` prefix and prepends it to all API calls
+- `App.tsx` strips the ingress prefix for route matching and re-adds it for `pushState`
+- `AppShell` switches to a bottom tab bar (`BottomTabBar`) when `embedded` mode is detected (ingress)
+
 ## Environment
 
 ```
