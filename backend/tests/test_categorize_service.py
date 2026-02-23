@@ -27,13 +27,13 @@ async def get_mapping(db, key):
 
 class TestNormalizeKey:
     def test_basic_lowercase(self):
-        assert normalize_key("Coconut Milk") == "coconut milk"
+        assert normalize_key("Coconut Milk") == "coconutmilk"
 
     def test_strips_weight_suffix(self):
-        assert normalize_key("COCONUT MILK 32OZ") == "coconut milk"
+        assert normalize_key("COCONUT MILK 32OZ") == "coconutmilk"
 
     def test_strips_lb_suffix(self):
-        assert normalize_key("Chicken Breast 2.5lb") == "chicken breast"
+        assert normalize_key("Chicken Breast 2.5lb") == "chickenbreast"
 
     def test_strips_count_suffix(self):
         assert normalize_key("Eggs 12ct") == "eggs"
@@ -45,10 +45,10 @@ class TestNormalizeKey:
         assert normalize_key("Item 42") == "item"
 
     def test_strips_special_characters(self):
-        assert normalize_key("Coconut Milk $4.99") == "coconut milk"
+        assert normalize_key("Coconut Milk $4.99") == "coconutmilk"
 
     def test_collapses_whitespace(self):
-        assert normalize_key("  Coconut   Milk  ") == "coconut milk"
+        assert normalize_key("  Coconut   Milk  ") == "coconutmilk"
 
     def test_empty_string(self):
         assert normalize_key("") == ""
@@ -65,31 +65,36 @@ class TestNormalizeKey:
     def test_kg_unit(self):
         assert normalize_key("Flour 2.5kg") == "flour"
 
+    def test_spaces_ignored_for_matching(self):
+        """OCR variants with/without spaces produce the same key."""
+        assert normalize_key("KS Steakstrip") == normalize_key("KSSteakstrip")
+        assert normalize_key("KS Steakstrip") == "kssteakstrip"
+
 
 # ── find_best_match ───────────────────────────────────────────────────────────
 
 class TestFindBestMatch:
     def test_exact_match(self):
-        mappings = {"coconut milk": "Dairy & Eggs", "milk": "Dairy & Eggs"}
-        assert find_best_match("coconut milk", mappings) == "Dairy & Eggs"
+        mappings = {"coconutmilk": "Dairy & Eggs", "milk": "Dairy & Eggs"}
+        assert find_best_match("coconutmilk", mappings) == "Dairy & Eggs"
 
     def test_substring_learned_in_key(self):
-        """Learned key 'milk' is a substring of query 'coconut milk'."""
+        """Learned key 'milk' is a substring of query 'coconutmilk'."""
         mappings = {"milk": "Dairy & Eggs"}
-        assert find_best_match("coconut milk", mappings) == "Dairy & Eggs"
+        assert find_best_match("coconutmilk", mappings) == "Dairy & Eggs"
 
     def test_substring_key_in_learned(self):
-        """Query 'milk' is a substring of learned key 'coconut milk'."""
-        mappings = {"coconut milk": "Dairy & Eggs"}
+        """Query 'milk' is a substring of learned key 'coconutmilk'."""
+        mappings = {"coconutmilk": "Dairy & Eggs"}
         assert find_best_match("milk", mappings) == "Dairy & Eggs"
 
     def test_longest_match_wins(self):
         """When multiple substrings match, the longest learned key wins."""
         mappings = {
             "milk": "Beverages",
-            "coconut milk": "Dairy & Eggs",
+            "coconutmilk": "Dairy & Eggs",
         }
-        assert find_best_match("organic coconut milk", mappings) == "Dairy & Eggs"
+        assert find_best_match("organiccoconutmilk", mappings) == "Dairy & Eggs"
 
     def test_no_match_returns_none(self):
         mappings = {"butter": "Dairy & Eggs", "bread": "Pantry"}
@@ -120,7 +125,7 @@ class TestSaveMappingSourcePriority:
         await save_mapping(db, "Coconut Milk", "Pantry", source="ai")
         await db.commit()
 
-        row = await get_mapping(db, "coconut milk")
+        row = await get_mapping(db, "coconutmilk")
         assert row["category"] == "Dairy & Eggs"
         assert row["source"] == "manual"
 
@@ -146,7 +151,7 @@ class TestSaveMappingSourcePriority:
         await save_mapping(db, "Oat Milk", "Beverages", source="manual")
         await db.commit()
 
-        row = await get_mapping(db, "oat milk")
+        row = await get_mapping(db, "oatmilk")
         assert row["category"] == "Beverages"
         assert row["source"] == "manual"
 
@@ -159,7 +164,7 @@ class TestSaveMappingSourcePriority:
         await save_mapping(db, "Trail Mix", "Snacks", source="manual")
         await db.commit()
 
-        row = await get_mapping(db, "trail mix")
+        row = await get_mapping(db, "trailmix")
         assert row["category"] == "Snacks"
         assert row["source"] == "manual"
 
@@ -186,7 +191,7 @@ class TestSaveMappingSourcePriority:
         await save_mapping(db, "CNUT MLK", "Dairy & Eggs", source="manual", display_name="Coconut Milk")
         await db.commit()
 
-        row = await get_mapping(db, "cnut mlk")
+        row = await get_mapping(db, "cnutmlk")
         assert row["display_name"] == "Coconut Milk"
 
     @pytest.mark.asyncio
@@ -195,7 +200,7 @@ class TestSaveMappingSourcePriority:
         await save_mapping(db, "organic eggs", "Dairy & Eggs", source="ai")
         await db.commit()
 
-        row = await get_mapping(db, "organic eggs")
+        row = await get_mapping(db, "organiceggs")
         assert row["display_name"] == "Organic Eggs"
 
 
@@ -231,12 +236,12 @@ class TestBatchUpsert:
         )
         await db.commit()
 
-        row = await get_mapping(db, "almond butter")
+        row = await get_mapping(db, "almondbutter")
         assert row["category"] == "Pantry"
         assert row["source"] == "manual"
         assert row["times_seen"] == 2
 
-        row = await get_mapping(db, "sparkling water")
+        row = await get_mapping(db, "sparklingwater")
         assert row["category"] == "Beverages"
         assert row["source"] == "ai"
 
@@ -268,7 +273,7 @@ class TestBatchUpsert:
         )
         await db.commit()
 
-        row = await get_mapping(db, "energy drink")
+        row = await get_mapping(db, "energydrink")
         assert row["category"] == "Snacks"
         assert row["source"] == "ai"
 
@@ -314,6 +319,7 @@ class TestApplyManualCorrection:
         await apply_manual_correction(db, item_id, "Dairy & Eggs")
 
         raw_key = normalize_key("CNUT MLK 32OZ")
+        assert raw_key == "cnutmlk"  # spaces stripped
         row = await get_mapping(db, raw_key)
         assert row is not None
         assert row["category"] == "Dairy & Eggs"
@@ -453,6 +459,7 @@ class TestKeyConsistency:
 
         # The mapping key must be based on the original raw_name "KS STEAKSTRIP"
         raw_key = normalize_key("KS STEAKSTRIP")
+        assert raw_key == "kssteakstrip"  # spaces stripped
         row = await get_mapping(db, raw_key)
         assert row is not None, "Mapping should be keyed on raw_name, not clean_name"
         assert row["category"] == "Meat & Seafood"

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.3] - 2026-02-23
 
+### Fixed
+- Item mapping lookup now ignores spaces so OCR variants like "KS Steakstrip" and "KSSteakstrip" match the same rule
+
 ### Removed
 - Home Assistant theme awareness (accent color and dark mode detection from parent HA iframe) — caused visual regressions
 

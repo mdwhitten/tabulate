@@ -35,6 +35,13 @@ async def init_db():
                 "ALTER TABLE categories ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0"
             )
             logger.info("Migration: added categories.is_disabled")
+        # Collapse spaces in normalized_key so OCR variants match
+        # (e.g. "ground beef" → "groundbeef", "ice cream" → "icecream").
+        # Runs on every startup but only touches rows that still contain spaces.
+        await db.execute(
+            "UPDATE item_mappings SET normalized_key = REPLACE(normalized_key, ' ', '') "
+            "WHERE normalized_key LIKE '% %'"
+        )
         await db.commit()
     logger.info("Initialized at %s", DB_PATH)
 
@@ -116,30 +123,32 @@ CREATE TABLE IF NOT EXISTS item_mappings (
 );
 
 -- Pre-seed common items so the system isn't totally empty on first run
+-- Keys are space-free (letters only) so OCR variants like "ground beef" /
+-- "groundbeef" collapse to the same lookup key.
 INSERT OR IGNORE INTO item_mappings (normalized_key, display_name, category, source, times_seen) VALUES
-    ('milk',          'Milk',          'Dairy & Eggs',   'manual', 1),
-    ('eggs',          'Eggs',          'Dairy & Eggs',   'manual', 1),
-    ('butter',        'Butter',        'Dairy & Eggs',   'manual', 1),
-    ('cheese',        'Cheese',        'Dairy & Eggs',   'manual', 1),
-    ('yogurt',        'Yogurt',        'Dairy & Eggs',   'manual', 1),
-    ('bananas',       'Bananas',       'Produce',        'manual', 1),
-    ('apples',        'Apples',        'Produce',        'manual', 1),
-    ('bread',         'Bread',         'Pantry',         'manual', 1),
-    ('chicken',       'Chicken',       'Meat & Seafood', 'manual', 1),
-    ('ground beef',   'Ground Beef',   'Meat & Seafood', 'manual', 1),
-    ('salmon',        'Salmon',        'Meat & Seafood', 'manual', 1),
-    ('pasta',         'Pasta',         'Pantry',         'manual', 1),
-    ('rice',          'Rice',          'Pantry',         'manual', 1),
-    ('orange juice',  'Orange Juice',  'Beverages',      'manual', 1),
-    ('soda',          'Soda',          'Beverages',      'manual', 1),
-    ('water',         'Water',         'Beverages',      'manual', 1),
-    ('chips',         'Chips',         'Snacks',         'manual', 1),
-    ('crackers',      'Crackers',      'Snacks',         'manual', 1),
-    ('ice cream',     'Ice Cream',     'Frozen',         'manual', 1),
-    ('frozen pizza',  'Frozen Pizza',  'Frozen',         'manual', 1),
-    ('soap',          'Soap',          'Household',      'manual', 1),
-    ('laundry',       'Laundry',       'Household',      'manual', 1),
-    ('paper towels',  'Paper Towels',  'Household',      'manual', 1);
+    ('milk',         'Milk',          'Dairy & Eggs',   'manual', 1),
+    ('eggs',         'Eggs',          'Dairy & Eggs',   'manual', 1),
+    ('butter',       'Butter',        'Dairy & Eggs',   'manual', 1),
+    ('cheese',       'Cheese',        'Dairy & Eggs',   'manual', 1),
+    ('yogurt',       'Yogurt',        'Dairy & Eggs',   'manual', 1),
+    ('bananas',      'Bananas',       'Produce',        'manual', 1),
+    ('apples',       'Apples',        'Produce',        'manual', 1),
+    ('bread',        'Bread',         'Pantry',         'manual', 1),
+    ('chicken',      'Chicken',       'Meat & Seafood', 'manual', 1),
+    ('groundbeef',   'Ground Beef',   'Meat & Seafood', 'manual', 1),
+    ('salmon',       'Salmon',        'Meat & Seafood', 'manual', 1),
+    ('pasta',        'Pasta',         'Pantry',         'manual', 1),
+    ('rice',         'Rice',          'Pantry',         'manual', 1),
+    ('orangejuice',  'Orange Juice',  'Beverages',      'manual', 1),
+    ('soda',         'Soda',          'Beverages',      'manual', 1),
+    ('water',        'Water',         'Beverages',      'manual', 1),
+    ('chips',        'Chips',         'Snacks',         'manual', 1),
+    ('crackers',     'Crackers',      'Snacks',         'manual', 1),
+    ('icecream',     'Ice Cream',     'Frozen',         'manual', 1),
+    ('frozenpizza',  'Frozen Pizza',  'Frozen',         'manual', 1),
+    ('soap',         'Soap',          'Household',      'manual', 1),
+    ('laundry',      'Laundry',       'Household',      'manual', 1),
+    ('papertowels',  'Paper Towels',  'Household',      'manual', 1);
 
 -- Monthly summaries cache (rebuilt on demand)
 CREATE TABLE IF NOT EXISTS monthly_summary (
