@@ -59,13 +59,19 @@ def normalize_key(name: str) -> str:
 
     Spaces are stripped so that OCR variants like "KS Steakstrip" and
     "KSSteakstrip" collapse to the same key ("kssteakstrip").
+
+    Items with no letters (e.g. "1/2 & 1/2") fall back to keeping
+    digits so the key isn't empty.
     """
-    # Lowercase, remove quantities/weights, strip special chars
     key = name.lower()
     key = re.sub(r'\d+(\.\d+)?\s*(oz|lb|kg|g|ml|l|ct|pk|pack|count|fl oz)\b', '', key)
     key = re.sub(r'\b\d+\b', '', key)           # remove standalone numbers
-    key = re.sub(r'[^a-z]', '', key)             # keep only letters (no spaces)
-    return key
+    letters_only = re.sub(r'[^a-z]', '', key)   # keep only letters (no spaces)
+    if letters_only:
+        return letters_only
+    # Fallback: keep letters + digits from original (skip number stripping)
+    fallback = re.sub(r'[^a-z0-9]', '', name.lower())
+    return fallback
 
 
 def find_best_match(key: str, mappings: dict[str, str]) -> Optional[str]:
