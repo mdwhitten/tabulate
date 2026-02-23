@@ -77,9 +77,10 @@ export function CategorySelect({ value, categories, onChange, disabled, size = '
     return () => document.removeEventListener('keydown', handleKey)
   }, [open])
 
+  const enabled = categories.filter(c => !c.is_disabled)
   const filtered = search.trim()
-    ? categories.filter(c => c.name.toLowerCase().includes(search.toLowerCase().trim()))
-    : categories
+    ? enabled.filter(c => c.name.toLowerCase().includes(search.toLowerCase().trim()))
+    : enabled
 
   const isLg = size === 'lg'
 
@@ -119,7 +120,7 @@ export function CategorySelect({ value, categories, onChange, disabled, size = '
           className="bg-white border border-gray-200 rounded-xl shadow-lg flex flex-col"
         >
           {/* Search */}
-          {categories.length > 5 && (
+          {enabled.length > 5 && (
             <div className="p-2 pb-0 flex-shrink-0">
               <input
                 ref={searchRef}

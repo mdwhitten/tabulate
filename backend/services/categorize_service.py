@@ -29,9 +29,9 @@ _BUILTIN_CATEGORIES = [
 
 
 async def get_categories(db: aiosqlite.Connection) -> list[str]:
-    """Return all category names (built-in + custom) ordered by sort_order."""
+    """Return enabled category names ordered by sort_order."""
     async with db.execute(
-        "SELECT name FROM categories ORDER BY sort_order, name"
+        "SELECT name FROM categories WHERE is_disabled = 0 ORDER BY sort_order, name"
     ) as cur:
         rows = await cur.fetchall()
     return [r["name"] for r in rows] if rows else _BUILTIN_CATEGORIES
@@ -95,9 +95,12 @@ def find_best_match(key: str, mappings: dict[str, str]) -> Optional[str]:
 
 
 async def load_mappings(db: aiosqlite.Connection) -> dict[str, str]:
-    """Load all learned item→category mappings from DB."""
+    """Load learned item→category mappings, excluding disabled categories."""
     async with db.execute(
-        "SELECT normalized_key, category FROM item_mappings"
+        """SELECT m.normalized_key, m.category
+           FROM item_mappings m
+           JOIN categories c ON c.name = m.category
+           WHERE c.is_disabled = 0"""
     ) as cursor:
         rows = await cursor.fetchall()
     return {row["normalized_key"]: row["category"] for row in rows}

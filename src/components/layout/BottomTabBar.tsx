@@ -153,16 +153,16 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
           )
         })}
 
-        {/* Scan FAB-style tab */}
+        {/* Scan tab */}
         <div className="flex-1 relative flex items-center justify-center">
           <button
             onClick={onUpload}
             className="flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-[#03a9f4] hover:bg-gray-100 active:text-[#0290d1] transition-colors rounded-lg"
           >
-            <span className="-mt-3 w-8 h-8 rounded-full bg-[#03a9f4] flex items-center justify-center shadow-md shadow-[#03a9f4]/30">
-              <Camera className="w-4 h-4 text-white" />
+            <span className="w-7 h-7 rounded-full bg-[#03a9f4] flex items-center justify-center">
+              <Camera className="w-3.5 h-3.5 text-white" />
             </span>
-            Scan
+            <span className="-mt-0.5">Scan</span>
           </button>
         </div>
       </div>
