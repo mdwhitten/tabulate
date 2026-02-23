@@ -73,9 +73,9 @@ export function LearnedItems() {
                   : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700'
               }`}>
               {cat && (
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: catColor(cat) }} />
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: catColor(cat, categories) }} />
               )}
-              {cat ? catIcon(cat) + ' ' + cat : 'All'}
+              {cat ? catIcon(cat, categories) + ' ' + cat : 'All'}
             </button>
           ))}
         </div>

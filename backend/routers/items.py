@@ -40,6 +40,35 @@ async def update_item_category(
     return {"status": "ok", "item_id": item_id, "category": body.category}
 
 
+@router.patch("/mappings/{mapping_id}/category")
+async def update_mapping_category(
+    mapping_id: int,
+    body: CategoryUpdate,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Directly update a learned mapping's category (from LearnedItems page)."""
+    valid = await get_categories(db)
+    if body.category not in valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid category. Must be one of: {', '.join(valid)}"
+        )
+
+    async with db.execute(
+        "SELECT id, normalized_key FROM item_mappings WHERE id = ?", (mapping_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Mapping not found")
+
+    await db.execute(
+        "UPDATE item_mappings SET category = ?, source = 'manual', last_seen = datetime('now') WHERE id = ?",
+        (body.category, mapping_id),
+    )
+    await db.commit()
+    return {"status": "ok", "mapping_id": mapping_id, "category": body.category}
+
+
 @router.get("/mappings", response_model=PaginatedMappings)
 async def list_mappings(
     db: aiosqlite.Connection = Depends(get_db),

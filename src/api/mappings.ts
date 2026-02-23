@@ -21,10 +21,10 @@ export async function listMappings(params: {
 }
 
 export async function updateMappingCategory(
-  itemId: number,
+  mappingId: number,
   category: string,
-): Promise<{ status: string; item_id: number; category: string }> {
-  return apiFetch(`/items/${itemId}/category`, {
+): Promise<{ status: string; mapping_id: number; category: string }> {
+  return apiFetch(`/items/mappings/${mappingId}/category`, {
     method: 'PATCH',
     body: JSON.stringify({ category }),
   })
