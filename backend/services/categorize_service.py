@@ -69,9 +69,11 @@ def normalize_key(name: str) -> str:
     letters_only = re.sub(r'[^a-z]', '', key)   # keep only letters (no spaces)
     if letters_only:
         return letters_only
-    # Fallback: keep letters + digits from original (skip number stripping)
-    fallback = re.sub(r'[^a-z0-9]', '', name.lower())
-    return fallback
+    # Fallback for symbol-heavy names like "1/2 & 1/2" — keep digits
+    # but only when the original contains non-alphanumeric symbols
+    if re.search(r'[^a-z0-9\s]', name.lower()):
+        return re.sub(r'[^a-z0-9]', '', name.lower())
+    return ''
 
 
 def find_best_match(key: str, mappings: dict[str, str]) -> Optional[str]:
