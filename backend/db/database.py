@@ -38,9 +38,14 @@ async def init_db():
         # Collapse spaces in normalized_key so OCR variants match
         # (e.g. "ground beef" → "groundbeef", "ice cream" → "icecream").
         # Runs on every startup but only touches rows that still contain spaces.
+        # Use UPDATE OR IGNORE to skip rows whose collapsed key already exists,
+        # then delete any remaining space-containing duplicates.
         await db.execute(
-            "UPDATE item_mappings SET normalized_key = REPLACE(normalized_key, ' ', '') "
+            "UPDATE OR IGNORE item_mappings SET normalized_key = REPLACE(normalized_key, ' ', '') "
             "WHERE normalized_key LIKE '% %'"
+        )
+        await db.execute(
+            "DELETE FROM item_mappings WHERE normalized_key LIKE '% %'"
         )
         await db.commit()
     logger.info("Initialized at %s", DB_PATH)
