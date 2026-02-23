@@ -42,7 +42,7 @@ export function AllReceipts({ onOpenReceipt }: AllReceiptsProps) {
             placeholder="Search store or date…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[var(--tab-accent)]/30 focus:border-[var(--tab-accent)] transition-all placeholder:text-gray-400"
+            className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4] transition-all placeholder:text-gray-400"
           />
         </div>
 
@@ -142,7 +142,7 @@ function ReceiptTableRow({
   return (
     <tr
       onClick={onClick}
-      className="border-b border-gray-50 last:border-0 hover:bg-[var(--tab-accent)]/5 cursor-pointer transition-colors group"
+      className="border-b border-gray-50 last:border-0 hover:bg-[#03a9f4]/5 cursor-pointer transition-colors group"
       style={{ animationDelay: `${Math.min(index, 9) * 30}ms` }}
     >
       <td className="px-5 py-3.5">

@@ -12,7 +12,6 @@ import { DuplicateWarningModal } from './components/DuplicateWarningModal'
 import { useReceipt } from './hooks/useReceipts'
 import { useCategoryList } from './hooks/useCategories'
 import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
-import { useHaTheme } from './hooks/useHaTheme'
 import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
@@ -199,9 +198,6 @@ export default function App() {
   const [dupeWarning, setDupeWarning] = useState<DupeWarning | null>(null)
   const shellRef = useRef<AppShellRef>(null)
 
-  // Pick up HA theme when running inside Home Assistant ingress
-  useHaTheme(!!INGRESS_PREFIX)
-
   const { page, receiptId } = route
 
   /** Show the duplicate warning modal and return whether the user chose to proceed. */
@@ -314,7 +310,7 @@ export default function App() {
             onClick={() => setUploadOpen(true)}
             title="Scan Receipt"
             aria-label="Scan Receipt"
-            className="flex items-center gap-1.5 h-9 px-3 bg-[var(--tab-accent)] text-white text-xs font-semibold rounded-lg hover:bg-[var(--tab-accent-hover)] transition-colors shadow-sm shadow-[var(--tab-accent)]/30"
+            className="flex items-center gap-1.5 h-9 px-3 bg-[#03a9f4] text-white text-xs font-semibold rounded-lg hover:bg-[#0290d1] transition-colors shadow-sm shadow-[#03a9f4]/30"
           >
             <Camera className="w-4 h-4" />
             Scan

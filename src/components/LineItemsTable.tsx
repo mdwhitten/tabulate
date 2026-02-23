@@ -522,7 +522,7 @@ export function LineItemsTable({
           {!locked && (
             <button
               onClick={openAddRow}
-              className="flex items-center gap-1.5 text-xs text-[var(--tab-accent)] hover:text-[var(--tab-accent-hover)] font-medium transition-colors px-1"
+              className="flex items-center gap-1.5 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors px-1"
             >
               <Plus className="w-3.5 h-3.5" />
               Add item
@@ -627,7 +627,7 @@ export function LineItemsTable({
                 <td colSpan={4} className="px-4 py-2">
                   <button
                     onClick={openAddRow}
-                    className="flex items-center gap-1.5 text-xs text-[var(--tab-accent)] hover:text-[var(--tab-accent-hover)] font-medium transition-colors"
+                    className="flex items-center gap-1.5 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     Add item

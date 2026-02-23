@@ -36,7 +36,7 @@ function ProcessingSteps() {
                 <Check className="w-3 h-3 text-emerald-600" />
               </div>
             ) : isActive ? (
-              <Loader2 className="w-5 h-5 text-[var(--tab-accent)] animate-spin shrink-0" />
+              <Loader2 className="w-5 h-5 text-[#03a9f4] animate-spin shrink-0" />
             ) : (
               <Circle className="w-5 h-5 text-gray-200 shrink-0" />
             )}
@@ -149,8 +149,8 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
             className={cn(
               'flex flex-col items-center justify-center gap-3 py-12 rounded-xl border-2 border-dashed cursor-pointer transition-all',
               dragOver
-                ? 'border-[var(--tab-accent)] bg-[var(--tab-accent)]/5 scale-[1.01]'
-                : 'border-gray-200 hover:border-[var(--tab-accent)]/60 hover:bg-gray-50',
+                ? 'border-[#03a9f4] bg-[#03a9f4]/5 scale-[1.01]'
+                : 'border-gray-200 hover:border-[#03a9f4]/60 hover:bg-gray-50',
               isPending && 'pointer-events-none',
             )}
           >
@@ -158,8 +158,8 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
               <ProcessingSteps />
             ) : (
               <>
-                <div className="w-14 h-14 bg-[var(--tab-accent)]/10 rounded-2xl flex items-center justify-center">
-                  <Upload className="w-7 h-7 text-[var(--tab-accent)]" />
+                <div className="w-14 h-14 bg-[#03a9f4]/10 rounded-2xl flex items-center justify-center">
+                  <Upload className="w-7 h-7 text-[#03a9f4]" />
                 </div>
                 <div className="text-center">
                   <p className="text-sm font-semibold text-gray-800">

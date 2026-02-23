@@ -108,7 +108,7 @@ export function Dashboard({ onNavigate, onOpenReceipt }: DashboardProps) {
             </div>
             <button
               onClick={() => onNavigate('trends')}
-              className="flex items-center gap-1 text-xs text-[var(--tab-accent)] hover:text-[var(--tab-accent-hover)] font-medium transition-colors"
+              className="flex items-center gap-1 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors"
             >
               View trends <ArrowRight className="w-3 h-3" />
             </button>
@@ -131,7 +131,7 @@ export function Dashboard({ onNavigate, onOpenReceipt }: DashboardProps) {
             </div>
             <button
               onClick={() => onNavigate('receipts')}
-              className="flex items-center gap-1 text-xs text-[var(--tab-accent)] hover:text-[var(--tab-accent-hover)] font-medium transition-colors"
+              className="flex items-center gap-1 text-xs text-[#03a9f4] hover:text-[#0290d1] font-medium transition-colors"
             >
               View all <ArrowRight className="w-3 h-3" />
             </button>
