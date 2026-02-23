@@ -5,6 +5,14 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] - 2026-02-23
+
+### Fixed
+- Scan button no longer extends outside the bottom tab bar in embedded mode
+- Status column on mobile receipts list now shows a compact icon-only badge instead of overflowing offscreen
+- Swipe-to-delete on learned items table no longer shows fragmented red strips across cells on tablet — only the delete action column reveals the indicator
+- Disabled categories are excluded from AI categorization prompts, learned mapping lookups, and the category picker dropdown
+
 ## [1.2.4] - 2026-02-23
 
 ### Fixed

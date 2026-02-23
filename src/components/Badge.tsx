@@ -20,12 +20,6 @@ const icons: Record<Variant, string> = {
   pending:  '·',
 }
 
-const dotColors: Record<Variant, string> = {
-  verified: 'bg-green-500',
-  review:   'bg-orange-400',
-  pending:  'bg-gray-300',
-}
-
 interface BadgeProps {
   variant: Variant
   compact?: boolean
