@@ -78,22 +78,50 @@ class TestFindBestMatch:
         mappings = {"coconutmilk": "Dairy & Eggs", "milk": "Dairy & Eggs"}
         assert find_best_match("coconutmilk", mappings) == "Dairy & Eggs"
 
-    def test_substring_learned_in_key(self):
-        """Learned key 'milk' is a substring of query 'coconutmilk'."""
+    def test_substring_similar_length(self):
+        """Learned key 'milk' is a substring of 'oatmilk' — 4/7 = 57% > 50%."""
         mappings = {"milk": "Dairy & Eggs"}
-        assert find_best_match("coconutmilk", mappings) == "Dairy & Eggs"
+        assert find_best_match("oatmilk", mappings) == "Dairy & Eggs"
 
     def test_substring_key_in_learned(self):
-        """Query 'milk' is a substring of learned key 'coconutmilk'."""
-        mappings = {"coconutmilk": "Dairy & Eggs"}
+        """Query 'milk' is a substring of learned key 'oatmilk' — within 50% ratio."""
+        mappings = {"oatmilk": "Dairy & Eggs"}
         assert find_best_match("milk", mappings) == "Dairy & Eggs"
 
+    def test_short_seed_does_not_match_long_key(self):
+        """Short generic seed 'milk' must NOT match long specific keys.
+
+        'milk' (4 chars) vs 'tasteofthaicoconutmilk' (22 chars) = 18% < 50%.
+        This was the root cause of the bug: items like 'Taste of Thai Coconut
+        Milk' would match the 'milk' seed and get 'Dairy & Eggs' instead of
+        going to AI categorization or matching a more specific user mapping.
+        """
+        mappings = {"milk": "Dairy & Eggs"}
+        assert find_best_match("tasteofthaicoconutmilk", mappings) is None
+
+    def test_short_seed_does_not_override_user_mapping(self):
+        """When user has a specific mapping, short seed must not steal the match.
+
+        Regression test for the reported bug: user mapped a 'Taste of Thai'
+        product to Pantry, but a different 'Taste of Thai' product containing
+        'milk' in its name would match the 'milk' → 'Dairy & Eggs' seed
+        instead of going to AI.
+        """
+        mappings = {
+            "tasteofthaipadthai": "Pantry",   # user's mapping for one product
+            "milk": "Dairy & Eggs",            # generic seed
+        }
+        # A different product from the same brand — should not match either
+        assert find_best_match("tasteofthaicoconutmilk", mappings) is None
+
     def test_longest_match_wins(self):
-        """When multiple substrings match, the longest learned key wins."""
+        """When multiple substrings match and pass ratio, the longest learned key wins."""
         mappings = {
             "milk": "Beverages",
             "coconutmilk": "Dairy & Eggs",
         }
+        # coconutmilk (11) / organiccoconutmilk (18) = 61% > 50% — matches
+        # milk (4) / organiccoconutmilk (18) = 22% < 50% — filtered out
         assert find_best_match("organiccoconutmilk", mappings) == "Dairy & Eggs"
 
     def test_no_match_returns_none(self):
@@ -105,12 +133,8 @@ class TestFindBestMatch:
 
     def test_empty_key(self):
         mappings = {"milk": "Dairy & Eggs"}
-        # empty string is a substring of everything — but we shouldn't match
-        # The function will match, but that's an edge case with empty keys
-        # which normalize_key wouldn't produce. Testing the function as-is:
         result = find_best_match("", mappings)
-        # "" in "milk" is True, so it will match
-        assert result == "Dairy & Eggs"
+        assert result is None
 
 
 # ── save_mapping source priority ──────────────────────────────────────────────
