@@ -5,6 +5,18 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-02-23
+
+### Added
+- Home Assistant theme awareness — accent color and dark/light mode are read from the parent HA iframe
+- Delete functionality for learned item mapping rules
+- Auto-release and PR validation CI workflows
+- Notify HA add-on repo on upstream release
+
+### Fixed
+- Duplicate item mappings caused by friendly names leaking into raw_name key
+- Scan button alignment and Avg column header alignment
+
 ## [1.2.1] - 2026-02-23
 
 ### Fixed
