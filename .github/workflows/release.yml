@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Validate semver title
+        id: version
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          if [[ ! "$TITLE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "PR title '$TITLE' is not valid semver — skipping release"
+            exit 1
+          fi
+          echo "tag=$TITLE" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          # Strip leading 'v' for changelog heading match
+          SEMVER="${VERSION#v}"
+
+          # Extract the section for this version from CHANGELOG.md
+          NOTES=$(awk -v ver="$SEMVER" '
+            /^## \[/ {
+              if (found) exit
+              if (index($0, "[" ver "]")) found=1
+              next
+            }
+            found { print }
+          ' CHANGELOG.md)
+
+          if [ -z "$NOTES" ]; then
+            echo "No changelog entry found for $SEMVER"
+            exit 1
+          fi
+
+          # Write to file to preserve newlines
+          echo "$NOTES" > /tmp/release-notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file /tmp/release-notes.md \
+            --target main

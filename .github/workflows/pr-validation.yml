@@ -1,0 +1,45 @@
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate PR title is semver
+        id: version
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          if [[ ! "$TITLE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::PR title must be a semver version like v1.2.3 — got '$TITLE'"
+            exit 1
+          fi
+          SEMVER="${TITLE#v}"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "PR title '$TITLE' is valid semver"
+
+      - name: Check CHANGELOG.md has entry for this version
+        run: |
+          SEMVER="${{ steps.version.outputs.semver }}"
+          if ! grep -qE "^## \[$SEMVER\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for [$SEMVER]. Please add a section: ## [$SEMVER] - YYYY-MM-DD"
+            exit 1
+          fi
+          echo "CHANGELOG.md contains entry for $SEMVER"
+
+      - name: Check package.json version matches
+        run: |
+          SEMVER="${{ steps.version.outputs.semver }}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "$SEMVER" ]; then
+            echo "::error::package.json version is $PKG_VERSION but PR title expects $SEMVER. Please update package.json."
+            exit 1
+          fi
+          echo "package.json version ($PKG_VERSION) matches PR title"
