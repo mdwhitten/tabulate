@@ -88,7 +88,7 @@ export function DuplicateWarningModal({
           </button>
           <button
             onClick={onContinue}
-            className="px-4 py-2 text-sm font-semibold text-white bg-[var(--tab-accent)] rounded-xl hover:bg-[var(--tab-accent-hover)] transition-colors"
+            className="px-4 py-2 text-sm font-semibold text-white bg-[#03a9f4] rounded-xl hover:bg-[#0290d1] transition-colors"
           >
             {continueLabel}
           </button>

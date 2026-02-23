@@ -218,7 +218,7 @@ export function EditItemModal({
         <div className="px-5 pt-3 pb-5 space-y-3">
           <button
             onClick={handleDone}
-            className="w-full py-3.5 bg-[var(--tab-accent)] text-white text-base font-semibold rounded-xl hover:bg-[var(--tab-accent-hover)] active:bg-[var(--tab-accent-active)] transition-colors"
+            className="w-full py-3.5 bg-[#03a9f4] text-white text-base font-semibold rounded-xl hover:bg-[#0290d1] active:bg-[#0277a8] transition-colors"
           >
             Done
           </button>

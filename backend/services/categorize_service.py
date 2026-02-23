@@ -55,14 +55,25 @@ Output format: JSON array of objects with "id", "category", and "confidence" (0.
 
 
 def normalize_key(name: str) -> str:
-    """Produce a stable lookup key from a raw item name."""
-    # Lowercase, remove quantities/weights, strip special chars
+    """Produce a stable lookup key from a raw item name.
+
+    Spaces are stripped so that OCR variants like "KS Steakstrip" and
+    "KSSteakstrip" collapse to the same key ("kssteakstrip").
+
+    Items with no letters (e.g. "1/2 & 1/2") fall back to keeping
+    digits so the key isn't empty.
+    """
     key = name.lower()
     key = re.sub(r'\d+(\.\d+)?\s*(oz|lb|kg|g|ml|l|ct|pk|pack|count|fl oz)\b', '', key)
     key = re.sub(r'\b\d+\b', '', key)           # remove standalone numbers
-    key = re.sub(r'[^a-z\s]', ' ', key)          # keep only letters + spaces
-    key = re.sub(r'\s+', ' ', key).strip()
-    return key
+    letters_only = re.sub(r'[^a-z]', '', key)   # keep only letters (no spaces)
+    if letters_only:
+        return letters_only
+    # Fallback for symbol-heavy names like "1/2 & 1/2" — keep digits
+    # but only when the original contains non-alphanumeric symbols
+    if re.search(r'[^a-z0-9\s]', name.lower()):
+        return re.sub(r'[^a-z0-9]', '', name.lower())
+    return ''
 
 
 def find_best_match(key: str, mappings: dict[str, str]) -> Optional[str]:

@@ -1,26 +1,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
-/* ── Theme custom properties ──────────────────────────────────────────────── */
-/* Defaults match the original Tabulate palette.  When running inside Home    */
-/* Assistant ingress, useHaTheme.ts overrides these on <html> to match the    */
-/* user's HA theme.                                                           */
-:root {
-  --tab-accent: #03a9f4;
-  --tab-accent-hover: #0290d1;
-  --tab-accent-active: #0277a8;
-  --tab-bg: #f5f6fa;
-  --tab-surface: #ffffff;
-  --tab-text: rgba(0,0,0,.87);
-  --tab-text-secondary: #6b7280;
-  --tab-border: #f3f4f6;
-}
-
 body {
   margin: 0;
   font-family: 'Inter', sans-serif;
-  background: var(--tab-bg);
-  color: var(--tab-text);
+  background: #f5f6fa;
+  color: rgba(0,0,0,.87);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -42,35 +27,3 @@ body {
 .safe-bottom {
   padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.5rem);
 }
-
-/* ── Dark mode (HA dark themes) ──────────────────────────────────────────── */
-/* When useHaTheme detects a dark HA theme it adds .dark to <html> and sets  */
-/* --tab-surface/--tab-text/--tab-text-secondary/--tab-border.  These rules  */
-/* re-map common Tailwind utilities so the UI looks correct on dark BGs      */
-/* without modifying every component file.                                   */
-
-:root.dark {
-  color-scheme: dark;
-}
-
-/* Surfaces */
-.dark .bg-white       { background-color: var(--tab-surface) !important; }
-.dark .bg-gray-50     { background-color: color-mix(in srgb, var(--tab-surface), white 5%) !important; }
-.dark .bg-gray-100    { background-color: color-mix(in srgb, var(--tab-surface), white 10%) !important; }
-
-/* Text */
-.dark .text-gray-900  { color: var(--tab-text) !important; }
-.dark .text-gray-800  { color: var(--tab-text) !important; }
-.dark .text-gray-700  { color: color-mix(in srgb, var(--tab-text), transparent 15%) !important; }
-.dark .text-gray-600  { color: var(--tab-text-secondary) !important; }
-.dark .text-gray-500  { color: var(--tab-text-secondary) !important; }
-
-/* Borders & dividers */
-.dark .border-gray-100 { border-color: var(--tab-border) !important; }
-.dark .border-gray-200 { border-color: var(--tab-border) !important; }
-.dark .border-gray-50  { border-color: color-mix(in srgb, var(--tab-border), transparent 40%) !important; }
-.dark .divide-gray-50 > * + *  { border-color: color-mix(in srgb, var(--tab-border), transparent 40%) !important; }
-.dark .divide-gray-100 > * + * { border-color: var(--tab-border) !important; }
-
-/* Placeholder text */
-.dark .placeholder\:text-gray-400::placeholder { color: color-mix(in srgb, var(--tab-text-secondary), transparent 30%) !important; }

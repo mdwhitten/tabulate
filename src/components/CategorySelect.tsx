@@ -127,7 +127,7 @@ export function CategorySelect({ value, categories, onChange, disabled, size = '
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search categories…"
-                className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--tab-accent)]/30 focus:border-[var(--tab-accent)]"
+                className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]"
               />
             </div>
           )}
@@ -160,7 +160,7 @@ export function CategorySelect({ value, categories, onChange, disabled, size = '
                     )}>
                       {c.name}
                     </span>
-                    {selected && <Check className="w-3.5 h-3.5 text-[var(--tab-accent)] shrink-0" />}
+                    {selected && <Check className="w-3.5 h-3.5 text-[#03a9f4] shrink-0" />}
                   </button>
                 )
               })
