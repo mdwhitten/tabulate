@@ -60,7 +60,7 @@ export function Sidebar({ current, onNavigate, onUpload, mobileOpen, onMobileClo
         {/* Logo */}
         <div className="flex items-center justify-between px-5 h-16 shrink-0 border-b border-white/5">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-[#03a9f4] rounded-xl flex items-center justify-center text-white text-sm font-bold shadow-lg shadow-[#03a9f4]/30">
+            <div className="w-8 h-8 bg-[var(--tab-accent)] rounded-xl flex items-center justify-center text-white text-sm font-bold shadow-lg shadow-[var(--tab-accent)]/30">
               T
             </div>
             <div>
@@ -91,11 +91,11 @@ export function Sidebar({ current, onNavigate, onUpload, mobileOpen, onMobileClo
                           'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all',
                           'border-l-2',
                           active
-                            ? 'bg-white/10 text-white border-[#03a9f4]'
+                            ? 'bg-white/10 text-white border-[var(--tab-accent)]'
                             : 'text-[#a0a0c0] hover:bg-white/5 hover:text-gray-200 border-transparent'
                         )}
                       >
-                        <span className={active ? 'text-[#03a9f4]' : 'opacity-70'}>{item.icon}</span>
+                        <span className={active ? 'text-[var(--tab-accent)]' : 'opacity-70'}>{item.icon}</span>
                         {item.label}
                       </button>
                     </li>
@@ -110,7 +110,7 @@ export function Sidebar({ current, onNavigate, onUpload, mobileOpen, onMobileClo
         <div className="px-3 py-4 shrink-0 border-t border-white/5">
           <button
             onClick={onUpload}
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#03a9f4] hover:bg-[#0290d1] text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-[#03a9f4]/25"
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-[var(--tab-accent)] hover:bg-[var(--tab-accent-hover)] text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-[var(--tab-accent)]/25"
           >
             <Camera className="w-4 h-4" />
             Scan Receipt

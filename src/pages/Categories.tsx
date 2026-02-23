@@ -107,7 +107,7 @@ function EmojiPicker({ selected, onSelect, initialOpen = false }: { selected: st
   return (
     <div className="flex-shrink-0">
       <button ref={btnRef} type="button" onClick={handleOpen}
-        className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center overflow-hidden hover:bg-gray-200 hover:ring-2 hover:ring-[#03a9f4]/30 transition-all cursor-pointer">
+        className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center overflow-hidden hover:bg-gray-200 hover:ring-2 hover:ring-[var(--tab-accent)]/30 transition-all cursor-pointer">
         <span className="text-xl leading-none">{selected || '📦'}</span>
       </button>
       {open && pos && createPortal(
@@ -117,7 +117,7 @@ function EmojiPicker({ selected, onSelect, initialOpen = false }: { selected: st
             <input ref={searchRef} type="text" value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search emojis..."
-              className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]" />
+              className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--tab-accent)]/30 focus:border-[var(--tab-accent)]" />
           </div>
           <div className="p-3 pt-2 overflow-y-auto">
             {(() => {
@@ -142,7 +142,7 @@ function EmojiPicker({ selected, onSelect, initialOpen = false }: { selected: st
                         onClick={() => { onSelect(emoji); setOpen(false); setSearch('') }}
                         className={cn(
                           'w-7 h-7 rounded-lg flex items-center justify-center text-base hover:bg-gray-100 transition-colors',
-                          selected === emoji && 'bg-blue-100 ring-1 ring-[#03a9f4]'
+                          selected === emoji && 'bg-blue-100 ring-1 ring-[var(--tab-accent)]'
                         )}>
                         {emoji}
                       </button>
@@ -192,7 +192,7 @@ function EditRow({ draft, isBuiltin, saveLabel, saving, initialIconPickerOpen, n
           placeholder="Category name"
           className={cn(
             'flex-1 text-sm font-medium text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-1.5',
-            'focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]',
+            'focus:outline-none focus:ring-2 focus:ring-[var(--tab-accent)]/30 focus:border-[var(--tab-accent)]',
             isBuiltin && 'opacity-50 cursor-not-allowed bg-gray-50'
           )} />
 
@@ -200,7 +200,7 @@ function EditRow({ draft, isBuiltin, saveLabel, saving, initialIconPickerOpen, n
           <button type="button" onClick={onSave} disabled={!draft.name.trim() || saving}
             className={cn(
               'text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors',
-              'bg-[#03a9f4] text-white hover:bg-[#0290d1]',
+              'bg-[var(--tab-accent)] text-white hover:bg-[var(--tab-accent-hover)]',
               'disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1'
             )}>
             {saving && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -254,7 +254,7 @@ function ActiveRow({ cat, isEditing, editDraft, onEditStart, onEditChange, onEdi
       <button type="button" onClick={cat.is_builtin ? undefined : () => onEditStart(true)}
         className={cn(
           'w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0',
-          !cat.is_builtin && 'hover:bg-gray-200 hover:ring-2 hover:ring-[#03a9f4]/30 transition-all cursor-pointer'
+          !cat.is_builtin && 'hover:bg-gray-200 hover:ring-2 hover:ring-[var(--tab-accent)]/30 transition-all cursor-pointer'
         )}
         title={cat.is_builtin ? undefined : 'Click to change icon'}>
         <span className="text-xl leading-none">{cat.icon}</span>
@@ -404,7 +404,7 @@ export function Categories() {
           </div>
           <button type="button" onClick={startNew} disabled={showNew}
             className={cn(
-              'flex items-center gap-1.5 bg-[#03a9f4] text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-[#0290d1] transition-colors',
+              'flex items-center gap-1.5 bg-[var(--tab-accent)] text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-[var(--tab-accent-hover)] transition-colors',
               'disabled:opacity-40 disabled:cursor-not-allowed'
             )}>
             <Plus className="w-4 h-4" />

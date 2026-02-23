@@ -487,8 +487,8 @@ STEP 3 — Output ONLY this JSON (no prose, no markdown):
   "total": number or null,
   "items": [
     {{
-      "name": "exact text from receipt, all caps, abbreviated as printed",
-      "display_name": "human-readable name, expand obvious abbreviations, title case (e.g. 'Nature\'s Own Whole Wheat Roundtop')",
+      "name": "VERBATIM text from the receipt — copy it character-for-character, all caps, with the EXACT same abbreviations, spacing, and truncation as printed. Do NOT expand abbreviations (e.g. keep 'KS STEAKSTRIP', never write 'KIRKLAND SIGNATURE STEAK STRIP'; keep 'HEB ORG TX RTS', never write 'H-E-B ORGANIC TEXAS ROOTS'). This field is used as a database key, so even small differences create duplicates.",
+      "display_name": "human-readable name, expand obvious abbreviations, title case (e.g. 'KS STEAKSTRIP' → 'Kirkland Signature Steak Strips', 'HEB ORG TX RTS' → 'H-E-B Organic Texas Roots'). This is the ONLY field where you should expand/interpret abbreviations.",
       "quantity": number,
       "price": number,
       "line_total": number

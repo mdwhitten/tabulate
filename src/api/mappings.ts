@@ -29,3 +29,11 @@ export async function updateMappingCategory(
     body: JSON.stringify({ category }),
   })
 }
+
+export async function deleteMapping(
+  mappingId: number,
+): Promise<{ status: string; mapping_id: number }> {
+  return apiFetch(`/items/mappings/${mappingId}`, {
+    method: 'DELETE',
+  })
+}

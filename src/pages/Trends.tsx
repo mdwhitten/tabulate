@@ -154,7 +154,7 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
 
               {isSelected && (
                 <rect x={x - 8} y={PAD_T} width={BAR_WIDTH + 16} height={barAreaH}
-                  fill="#03a9f4" opacity={0.06} rx={6} />
+                  fill="var(--tab-accent)" opacity={0.06} rx={6} />
               )}
 
               {/* Invisible hit area for whole column */}
@@ -183,13 +183,13 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
               </g>
 
               <text x={x + BAR_WIDTH / 2} y={yBaseline + 14} textAnchor="middle" fontSize={11}
-                fontWeight={isSelected ? 700 : 400} fill={isSelected ? '#03a9f4' : '#6b7280'}
+                fontWeight={isSelected ? 700 : 400} fill={isSelected ? 'var(--tab-accent)' : '#6b7280'}
                 fontFamily="ui-sans-serif, system-ui, sans-serif">
                 {shortLabel(month.month_label)}
               </text>
 
               <text x={x + BAR_WIDTH / 2} y={yBaseline + 28} textAnchor="middle" fontSize={10}
-                fill={isSelected ? '#03a9f4' : '#9ca3af'}
+                fill={isSelected ? 'var(--tab-accent)' : '#9ca3af'}
                 fontFamily="ui-monospace, 'JetBrains Mono', monospace"
                 fontWeight={isSelected ? 600 : 400}>
                 {fmtShort(month.total)}
@@ -439,7 +439,7 @@ export function Trends() {
 
               <div className="hidden sm:flex items-center gap-3 text-[11px] uppercase tracking-widest font-semibold text-gray-400 pr-1">
                 <span className="w-16 text-right">Amount</span>
-                <span className="w-16 text-right">Avg</span>
+                <span className="w-16 text-center">Avg</span>
                 <span className="w-14 text-right">vs prev</span>
               </div>
             </div>
