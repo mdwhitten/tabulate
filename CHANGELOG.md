@@ -5,6 +5,18 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-02-25
+
+### Fixed
+- SQL injection vector in image serving helper — column name now validated against a whitelist
+- SQL fragment interpolation in receipt save endpoint replaced with parameterized query
+- Wildcard CORS no longer sends credentials; added `CORS_ORIGINS` env var for explicit origin lists
+- API key prefix no longer leaked in `/api/diagnose` response — only reports presence
+- File upload now validates Content-Type against allowed image types and enforces 20 MB size cap server-side
+- Backend port in Docker Compose bound to `127.0.0.1` so it's not exposed to the network
+- Crop endpoint body changed from unvalidated `dict` to a Pydantic model with typed `corners` field
+- Image file serving now verifies resolved paths are contained within `IMAGE_DIR` to prevent path traversal
+
 ## [1.3.0] - 2025-02-25
 
 ### Added
