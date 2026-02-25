@@ -57,6 +57,15 @@ export interface TrendsResponse {
   categories: string[]
 }
 
+export interface CategoryItemDetail {
+  clean_name: string
+  raw_name: string
+  price: number
+  quantity: number
+  store_name: string | null
+  receipt_date: string | null
+}
+
 export interface ItemMapping {
   id: number
   normalized_key: string

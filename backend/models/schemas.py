@@ -127,6 +127,14 @@ class TrendsResponse(BaseModel):
     months: List[MonthSummary]
     categories: List[str]
 
+class CategoryItemDetail(BaseModel):
+    clean_name: str
+    raw_name: str
+    price: float
+    quantity: float
+    store_name: Optional[str] = None
+    receipt_date: Optional[str] = None
+
 
 # ── Upload / Processing ────────────────────────────────
 class ProcessingResult(BaseModel):

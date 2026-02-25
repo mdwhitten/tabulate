@@ -1,9 +1,10 @@
 """
 Trends Router
 
-GET /api/trends/monthly          — spending by category for last N months
-GET /api/trends/monthly/{year}/{month} — single month detail
-GET /api/trends/stores           — spending by store
+GET /api/trends/monthly                       — spending by category for last N months
+GET /api/trends/monthly/{year}/{month}        — single month detail
+GET /api/trends/monthly/{year}/{month}/items  — line items for a category in a month
+GET /api/trends/stores                        — spending by store
 """
 from datetime import datetime, date
 from calendar import month_abbr
@@ -12,7 +13,7 @@ from fastapi import APIRouter, Depends, Query
 import aiosqlite
 
 from db.database import get_db
-from models.schemas import TrendsResponse, MonthSummary
+from models.schemas import TrendsResponse, MonthSummary, CategoryItemDetail
 from services.categorize_service import get_categories
 
 router = APIRouter()
@@ -104,6 +105,38 @@ async def single_month(
         "month_label": f"{month_abbr[month]} {year}",
         "breakdown": [dict(r) for r in rows],
     }
+
+
+@router.get("/monthly/{year}/{month}/items", response_model=list[CategoryItemDetail])
+async def category_items(
+    year: int,
+    month: int,
+    category: str = Query(...),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Return individual line items for a specific category in a given month."""
+    async with db.execute(
+        """
+        SELECT
+            li.clean_name,
+            li.raw_name,
+            li.price,
+            li.quantity,
+            r.store_name,
+            COALESCE(r.receipt_date, r.scanned_at) AS receipt_date
+        FROM line_items li
+        JOIN receipts r ON r.id = li.receipt_id
+        WHERE r.status = 'verified'
+          AND li.category = ?
+          AND CAST(strftime('%Y', COALESCE(r.receipt_date, r.scanned_at)) AS INTEGER) = ?
+          AND CAST(strftime('%m', COALESCE(r.receipt_date, r.scanned_at)) AS INTEGER) = ?
+        ORDER BY li.price * li.quantity DESC
+        """,
+        (category, year, month),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    return [dict(r) for r in rows]
 
 
 @router.get("/stores")
