@@ -198,7 +198,7 @@ async def upload_receipt(
          "price": item["price"], "quantity": item["quantity"]}
         for i, item in enumerate(parsed.raw_items)
     ]
-    categorized = await categorize_items(raw_items, store, db)
+    categorized, categorization_failed = await categorize_items(raw_items, store, db)
 
     # Persist line items
     line_items = []
@@ -238,6 +238,7 @@ async def upload_receipt(
         total_verified=verified,
         verification_message=verify_msg,
         thumbnail_path=thumbnail_path,
+        categorization_failed=categorization_failed,
         items=line_items,
     )
 
@@ -413,6 +414,65 @@ async def save_receipt(
         pass
 
     return {"status": "ok", "receipt_id": receipt_id}
+
+
+# ── Recategorize (retry after failure) ────────────────────────────────────────
+
+@router.post("/{receipt_id}/recategorize")
+async def recategorize_receipt(
+    receipt_id: int,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Re-run AI categorization on a receipt's line items.
+    Called when the initial categorization failed and the user clicks Retry.
+    Only items currently categorized as 'Other' with category_source='ai' are
+    sent to Claude — learned and manual categories are left untouched.
+    """
+    async with db.execute("SELECT store_name FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    store_name = row["store_name"]
+
+    # Fetch line items that need recategorization (AI-assigned "Other" with low confidence)
+    async with db.execute(
+        """SELECT id, raw_name, clean_name, price, quantity
+           FROM line_items
+           WHERE receipt_id = ? AND category = 'Other' AND category_source = 'ai'
+           ORDER BY id""",
+        (receipt_id,),
+    ) as cur:
+        items_rows = await cur.fetchall()
+
+    if not items_rows:
+        return {"status": "ok", "categorization_failed": False, "updated": 0}
+
+    raw_items = [
+        {"id": r["id"], "raw_name": r["raw_name"], "clean_name": r["clean_name"],
+         "price": r["price"], "quantity": r["quantity"]}
+        for r in items_rows
+    ]
+
+    categorized, failed = await categorize_items(raw_items, store_name, db)
+
+    if failed:
+        return {"status": "failed", "categorization_failed": True, "updated": 0}
+
+    # Update line items with new categories
+    updated = 0
+    for item in categorized:
+        if item["category"] != "Other" or item.get("ai_confidence", 0) > 0:
+            await db.execute(
+                """UPDATE line_items
+                   SET category = ?, category_source = ?, ai_confidence = ?
+                   WHERE id = ?""",
+                (item["category"], item["category_source"], item.get("ai_confidence"), item["id"]),
+            )
+            updated += 1
+    await db.commit()
+
+    return {"status": "ok", "categorization_failed": False, "updated": updated}
 
 
 # ── List Receipts ─────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ export interface ProcessingResult {
   total_verified: boolean
   verification_message: string
   thumbnail_path: string | null
+  categorization_failed: boolean
   items: Receipt['items']
 }
 
@@ -68,6 +69,16 @@ export async function checkDuplicates(
 
 export async function deleteReceipt(id: number): Promise<void> {
   return apiFetch(`/receipts/${id}`, { method: 'DELETE' })
+}
+
+export interface RecategorizeResult {
+  status: string
+  categorization_failed: boolean
+  updated: number
+}
+
+export async function recategorizeReceipt(id: number): Promise<RecategorizeResult> {
+  return apiFetch<RecategorizeResult>(`/receipts/${id}/recategorize`, { method: 'POST' })
 }
 
 export function receiptThumbnailUrl(id: number): string {

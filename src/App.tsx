@@ -124,6 +124,8 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDu
     return fetchedReceipt ?? null
   }, [freshResult, fetchedReceipt])
 
+  const categorizationFailed = freshResult?.categorization_failed ?? false
+
   if (!freshResult && isLoading) {
     return (
       <div className="flex items-center justify-center py-32 text-gray-400 text-sm">
@@ -179,6 +181,7 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDu
     <ReviewReceipt
       receipt={receipt!}
       isFreshUpload={freshResult != null}
+      categorizationFailed={categorizationFailed}
       categories={categories}
       onSave={handleSave}
       onRescan={onRescan}

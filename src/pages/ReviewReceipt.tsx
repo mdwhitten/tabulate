@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle } from 'lucide-react'
 import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
@@ -9,6 +9,7 @@ import { nextTempId } from '../components/LineItemsTable'
 import { ReceiptPreview } from '../components/ReceiptPreview'
 import { CropModal } from '../components/CropModal'
 import { cropReceipt } from '../api/receipts'
+import { useRecategorize } from '../hooks/useReceipts'
 import { fmt } from '../lib/utils'
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
 interface ReviewReceiptProps {
   receipt: Receipt
   isFreshUpload?: boolean
+  categorizationFailed?: boolean
   categories: Category[]
   onSave?: (body: SaveReceiptBody) => Promise<void>
   onRescan?: () => void
@@ -97,6 +99,7 @@ interface ReviewReceiptProps {
 export function ReviewReceipt({
   receipt,
   isFreshUpload = false,
+  categorizationFailed: initialCategorizationFailed = false,
   categories,
   onSave,
   onRescan,
@@ -122,6 +125,8 @@ export function ReviewReceipt({
   const [cropOpen, setCropOpen]         = useState(false)
   const [imgCacheBust, setImgCacheBust] = useState(0)
   const [dateError, setDateError]       = useState(false)
+  const [catFailed, setCatFailed]       = useState(initialCategorizationFailed)
+  const recategorize = useRecategorize(receipt.id)
   const dateInputRef = useRef<HTMLInputElement>(null)
 
   // Reset local state when the receipt prop changes (e.g. after draft save refetch)
@@ -133,6 +138,7 @@ export function ReviewReceipt({
       setLocalItems([])
       setStoreName(receipt.store_name ?? '')
       setReceiptDate(receipt.receipt_date ?? '')
+      setCatFailed(false)  // clear banner on receipt change / refetch
     }
   }, [receipt])
 
@@ -306,6 +312,32 @@ export function ReviewReceipt({
 
   return (
     <div className="min-h-screen bg-gray-100">
+      {/* Categorization failure banner */}
+      {catFailed && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl mb-2">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+          <p className="flex-1 text-sm text-amber-800">
+            AI categorization failed — items defaulted to "Other".
+          </p>
+          <button
+            onClick={async () => {
+              const result = await recategorize.mutateAsync()
+              if (!result.categorization_failed) setCatFailed(false)
+            }}
+            disabled={recategorize.isPending}
+            className="px-3 py-1.5 text-xs font-semibold text-amber-700 bg-white border border-amber-300 rounded-lg hover:bg-amber-50 disabled:opacity-50 transition-colors"
+          >
+            {recategorize.isPending ? 'Retrying…' : 'Retry'}
+          </button>
+          <button
+            onClick={() => setCatFailed(false)}
+            className="px-3 py-1.5 text-xs font-medium text-amber-600 hover:text-amber-800 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Verify bar */}
       <VerifyBar
         status={verifyStatus}
