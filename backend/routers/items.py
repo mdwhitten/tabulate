@@ -11,7 +11,7 @@ import aiosqlite
 
 from db.database import get_db
 from models.schemas import ItemMapping, PaginatedMappings
-from services.categorize_service import apply_manual_correction, get_categories
+from services.categorize_service import apply_manual_correction, get_categories, save_mapping
 
 router = APIRouter()
 
@@ -38,6 +38,18 @@ async def update_item_category(
             raise HTTPException(status_code=404, detail="Item not found")
 
     await apply_manual_correction(db, item_id, body.category)
+
+    # This endpoint is used on already-approved receipts, so persist the
+    # mapping immediately (unlike the receipt save flow which defers).
+    async with db.execute(
+        "SELECT raw_name, clean_name FROM line_items WHERE id = ?", (item_id,)
+    ) as cur2:
+        row = await cur2.fetchone()
+    if row:
+        display = (row["clean_name"] or row["raw_name"]).strip().title()
+        await save_mapping(db, row["raw_name"], body.category, source="manual", display_name=display)
+        await db.commit()
+
     return {"status": "ok", "item_id": item_id, "category": body.category}
 
 

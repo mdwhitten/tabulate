@@ -9,6 +9,7 @@ from services.categorize_service import (
     save_mapping,
     load_mappings,
     apply_manual_correction,
+    persist_approved_mappings,
 )
 
 
@@ -307,23 +308,25 @@ class TestBatchUpsert:
 class TestApplyManualCorrection:
     @pytest.fixture
     async def receipt_with_item(self, db):
-        """Insert a receipt + line item, return the line item id."""
-        await db.execute(
+        """Insert a receipt + line item, return (receipt_id, item_id)."""
+        cur = await db.execute(
             "INSERT INTO receipts (store_name, receipt_date, total) VALUES (?, ?, ?)",
             ("Test Store", "2025-01-15", 9.99),
         )
+        receipt_id = cur.lastrowid
         await db.execute(
             """INSERT INTO line_items (receipt_id, raw_name, clean_name, price, category, category_source)
-               VALUES (1, 'CNUT MLK 32OZ', 'Coconut Milk', 4.99, 'Other', 'ai')""",
+               VALUES (?, 'CNUT MLK 32OZ', 'Coconut Milk', 4.99, 'Other', 'ai')""",
+            (receipt_id,),
         )
         await db.commit()
-        async with db.execute("SELECT id FROM line_items LIMIT 1") as cur:
-            row = await cur.fetchone()
-        return row["id"]
+        async with db.execute("SELECT id FROM line_items WHERE receipt_id = ?", (receipt_id,)) as cur2:
+            row = await cur2.fetchone()
+        return receipt_id, row["id"]
 
     @pytest.mark.asyncio
     async def test_correction_updates_line_item(self, db, receipt_with_item):
-        item_id = receipt_with_item
+        _receipt_id, item_id = receipt_with_item
         await apply_manual_correction(db, item_id, "Dairy & Eggs")
 
         async with db.execute(
@@ -339,8 +342,10 @@ class TestApplyManualCorrection:
     @pytest.mark.asyncio
     async def test_correction_keys_mapping_on_raw_name(self, db, receipt_with_item):
         """Mapping should be keyed on raw_name, not clean_name."""
-        item_id = receipt_with_item
+        receipt_id, item_id = receipt_with_item
         await apply_manual_correction(db, item_id, "Dairy & Eggs")
+        await persist_approved_mappings(db, receipt_id)
+        await db.commit()
 
         raw_key = normalize_key("CNUT MLK 32OZ")
         assert raw_key == "cnutmlk"  # spaces stripped
@@ -352,8 +357,10 @@ class TestApplyManualCorrection:
     @pytest.mark.asyncio
     async def test_correction_uses_clean_name_for_display(self, db, receipt_with_item):
         """display_name should come from clean_name, not the OCR raw_name."""
-        item_id = receipt_with_item
+        receipt_id, item_id = receipt_with_item
         await apply_manual_correction(db, item_id, "Dairy & Eggs")
+        await persist_approved_mappings(db, receipt_id)
+        await db.commit()
 
         raw_key = normalize_key("CNUT MLK 32OZ")
         row = await get_mapping(db, raw_key)
@@ -361,7 +368,7 @@ class TestApplyManualCorrection:
 
     @pytest.mark.asyncio
     async def test_correction_rejects_invalid_category(self, db, receipt_with_item):
-        item_id = receipt_with_item
+        _receipt_id, item_id = receipt_with_item
         with pytest.raises(ValueError, match="Unknown category"):
             await apply_manual_correction(db, item_id, "Nonexistent Category")
 
@@ -376,13 +383,14 @@ class TestApplyManualCorrection:
     @pytest.mark.asyncio
     async def test_correction_does_not_downgrade_after_ai_rescan(self, db, receipt_with_item):
         """
-        Full lifecycle: manual correction → AI re-encounter → mapping stays manual.
-        Simulates the original reported bug.
+        Full lifecycle: manual correction → approval → AI re-encounter → mapping stays manual.
         """
-        item_id = receipt_with_item
+        receipt_id, item_id = receipt_with_item
 
-        # 1. User manually corrects
+        # 1. User manually corrects + approves
         await apply_manual_correction(db, item_id, "Dairy & Eggs")
+        await persist_approved_mappings(db, receipt_id)
+        await db.commit()
 
         raw_key = normalize_key("CNUT MLK 32OZ")
         row = await get_mapping(db, raw_key)
@@ -422,27 +430,31 @@ class TestLoadMappings:
 
 class TestKeyConsistency:
     @pytest.mark.asyncio
-    async def test_stage1_lookup_finds_manual_correction(self, db, ):
+    async def test_stage1_lookup_finds_manual_correction(self, db):
         """
-        After a manual correction keyed on raw_name, a Stage 1 lookup
-        (also keyed on raw_name) should find the mapping.
+        After a manual correction + approval, a Stage 1 lookup
+        (keyed on raw_name) should find the mapping.
         """
         # Insert receipt + item
-        await db.execute(
+        cur = await db.execute(
             "INSERT INTO receipts (store_name, total) VALUES (?, ?)",
             ("Store", 10.0),
         )
+        receipt_id = cur.lastrowid
         await db.execute(
             """INSERT INTO line_items (receipt_id, raw_name, clean_name, price, category, category_source)
-               VALUES (1, 'ORG ALMND MILK 64OZ', 'Organic Almond Milk', 5.49, 'Beverages', 'ai')""",
+               VALUES (?, 'ORG ALMND MILK 64OZ', 'Organic Almond Milk', 5.49, 'Beverages', 'ai')""",
+            (receipt_id,),
         )
         await db.commit()
 
-        async with db.execute("SELECT id FROM line_items LIMIT 1") as cur:
-            item_id = (await cur.fetchone())["id"]
+        async with db.execute("SELECT id FROM line_items WHERE receipt_id = ?", (receipt_id,)) as cur2:
+            item_id = (await cur2.fetchone())["id"]
 
-        # Manual correction
+        # Manual correction + approval persists mappings
         await apply_manual_correction(db, item_id, "Dairy & Eggs")
+        await persist_approved_mappings(db, receipt_id)
+        await db.commit()
 
         # Stage 1 lookup: uses normalize_key(raw_name)
         mappings = await load_mappings(db)
@@ -457,19 +469,21 @@ class TestKeyConsistency:
         "Kirkland Signature Steak Strips") but raw_name remains the OCR text
         (e.g. "KS STEAKSTRIP"), the mapping key should be based on raw_name.
         """
-        await db.execute(
+        cur = await db.execute(
             "INSERT INTO receipts (store_name, total) VALUES (?, ?)",
             ("Costco", 15.99),
         )
+        receipt_id = cur.lastrowid
         # raw_name = OCR text, clean_name = AI-interpreted display name
         await db.execute(
             """INSERT INTO line_items (receipt_id, raw_name, clean_name, price, category, category_source)
-               VALUES (1, 'KS STEAKSTRIP', 'Kirkland Signature Steak Strips', 15.99, 'Other', 'ai')""",
+               VALUES (?, 'KS STEAKSTRIP', 'Kirkland Signature Steak Strips', 15.99, 'Other', 'ai')""",
+            (receipt_id,),
         )
         await db.commit()
 
-        async with db.execute("SELECT id FROM line_items LIMIT 1") as cur:
-            item_id = (await cur.fetchone())["id"]
+        async with db.execute("SELECT id FROM line_items WHERE receipt_id = ?", (receipt_id,)) as cur2:
+            item_id = (await cur2.fetchone())["id"]
 
         # Simulate user editing clean_name to a different friendly name
         await db.execute(
@@ -478,8 +492,10 @@ class TestKeyConsistency:
         )
         await db.commit()
 
-        # Now apply a manual category correction
+        # Now apply a manual category correction + approve
         await apply_manual_correction(db, item_id, "Meat & Seafood")
+        await persist_approved_mappings(db, receipt_id)
+        await db.commit()
 
         # The mapping key must be based on the original raw_name "KS STEAKSTRIP"
         raw_key = normalize_key("KS STEAKSTRIP")

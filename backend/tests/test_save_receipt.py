@@ -78,7 +78,7 @@ class TestNameCorrectionPreservesRawName:
         single save, the mapping key must be based on raw_name (OCR text),
         not the user-edited friendly name.
         """
-        from services.categorize_service import apply_manual_correction
+        from services.categorize_service import apply_manual_correction, persist_approved_mappings
 
         receipt_id, [item_id] = await insert_receipt_with_items(db, [
             ("KS STEAKSTRIP", "Ks Steakstrip", 15.99, "Other"),
@@ -91,8 +91,10 @@ class TestNameCorrectionPreservesRawName:
         )
         await db.commit()
 
-        # Step 2: Apply category correction (reads raw_name from DB for mapping key)
+        # Step 2: Apply category correction + approve (mappings saved at approval)
         await apply_manual_correction(db, item_id, "Meat & Seafood")
+        await persist_approved_mappings(db, receipt_id)
+        await db.commit()
 
         # The mapping should be keyed on raw_name, not the edited clean_name
         raw_key = normalize_key("KS STEAKSTRIP")
@@ -108,24 +110,26 @@ class TestNameCorrectionPreservesRawName:
     @pytest.mark.asyncio
     async def test_subsequent_scan_matches_original_raw_name(self, db):
         """
-        After a name edit + category correction, a future scan of the same
-        item (with the same raw OCR text) should match the existing mapping.
+        After a name edit + category correction + approval, a future scan of
+        the same item (with the same raw OCR text) should match the existing mapping.
         """
         from services.categorize_service import (
-            apply_manual_correction, find_best_match,
+            apply_manual_correction, persist_approved_mappings, find_best_match,
         )
 
         receipt_id, [item_id] = await insert_receipt_with_items(db, [
             ("KS STEAKSTRIP", "Ks Steakstrip", 15.99, "Other"),
         ])
 
-        # Edit name + correct category
+        # Edit name + correct category + approve
         await db.execute(
             "UPDATE line_items SET clean_name = ? WHERE id = ?",
             ("Kirkland Signature Steak Strips", item_id),
         )
         await db.commit()
         await apply_manual_correction(db, item_id, "Meat & Seafood")
+        await persist_approved_mappings(db, receipt_id)
+        await db.commit()
 
         # Simulate a future scan encountering the same OCR text
         mappings = await load_mappings(db)

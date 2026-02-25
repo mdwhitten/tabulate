@@ -269,35 +269,35 @@ async def apply_manual_correction(
         "UPDATE line_items SET category = ?, category_source = 'manual', corrected = 1 WHERE id = ?",
         (new_category, item_id),
     )
-    # Key on raw_name (consistent with categorize_items Stage 1 lookup);
-    # use clean_name for the human-readable display_name.
-    display = (row["clean_name"] or row["raw_name"]).strip().title()
-    await save_mapping(db, row["raw_name"], new_category, source="manual", display_name=display)
+    # NOTE: the learned mapping is NOT saved here.  All mappings (manual and
+    # AI) are persisted together when the receipt is approved via
+    # persist_approved_mappings().  This keeps the DB clean if the user
+    # later deletes the receipt without approving.
     await db.commit()
 
 
-async def persist_ai_mappings(
+async def persist_approved_mappings(
     db: aiosqlite.Connection,
     receipt_id: int,
-    corrected_item_ids: set[int],
 ):
     """
-    Persist learned mappings for AI-categorized items on a receipt.
+    Persist learned mappings for ALL items on an approved receipt.
 
-    Called at approval time so that mappings are only created for receipts
-    the user actually kept.  Items in *corrected_item_ids* are skipped
-    because apply_manual_correction already saved their mapping.
+    Called only at approval time so that no mappings leak into the DB
+    for receipts the user cancels or deletes.  Each item's
+    ``category_source`` determines the mapping source priority:
+    ``manual`` corrections get ``source='manual'`` (highest priority),
+    everything else gets ``source='ai'``.
     """
     async with db.execute(
-        """SELECT id, raw_name, clean_name, category
+        """SELECT raw_name, clean_name, category, category_source
            FROM line_items
-           WHERE receipt_id = ? AND category_source = 'ai'""",
+           WHERE receipt_id = ?""",
         (receipt_id,),
     ) as cur:
         rows = await cur.fetchall()
 
     for row in rows:
-        if row["id"] in corrected_item_ids:
-            continue
+        source = "manual" if row["category_source"] == "manual" else "ai"
         display = (row["clean_name"] or row["raw_name"]).strip().title()
-        await save_mapping(db, row["raw_name"], row["category"], source="ai", display_name=display)
+        await save_mapping(db, row["raw_name"], row["category"], source=source, display_name=display)

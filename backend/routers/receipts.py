@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from db.database import get_db
 from models.schemas import ReceiptSummary, Receipt, ProcessingResult, LineItem
 from services.ocr_service import extract_text_from_image, parse_receipt_text, parse_receipt_with_vision, verify_total
-from services.categorize_service import categorize_items, apply_manual_correction, persist_ai_mappings
+from services.categorize_service import categorize_items, apply_manual_correction, persist_approved_mappings
 from services.image_service import generate_thumbnail, detect_receipt_edges
 
 logger = logging.getLogger("tabulate.receipts")
@@ -344,16 +344,13 @@ async def save_receipt(
                 (name, int(item_id_str), receipt_id),
             )
 
-    corrected_ids: set[int] = set()
     for item_id_str, new_category in body.corrections.items():
-        item_id_int = int(item_id_str)
-        corrected_ids.add(item_id_int)
-        await apply_manual_correction(db, item_id_int, new_category)
+        await apply_manual_correction(db, int(item_id_str), new_category)
 
-    # Persist AI-learned mappings only when the user approves (not on draft save).
+    # Persist all learned mappings only when the user approves (not on draft save).
     # This prevents orphaned mappings when a receipt is later deleted.
     if body.approve:
-        await persist_ai_mappings(db, receipt_id, corrected_ids)
+        await persist_approved_mappings(db, receipt_id)
 
     for item_id_str, new_price in body.price_corrections.items():
         try:
