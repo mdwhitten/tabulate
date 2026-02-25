@@ -37,7 +37,7 @@ function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
         ...state,
         categoryCorrections: { ...state.categoryCorrections, [action.itemId]: action.category },
         items: state.items.map(it =>
-          it.id === action.itemId ? { ...it, category: action.category } : it
+          it.id === action.itemId ? { ...it, category: action.category, category_source: 'manual' as const } : it
         ),
       }
     case 'SET_PRICE':

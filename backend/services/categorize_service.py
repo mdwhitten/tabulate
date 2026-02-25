@@ -187,16 +187,9 @@ async def categorize_items(
     # Stage 2 — Claude API for unknown items
     if unknown:
         ai_results = await _call_claude(unknown, store_name, db)
-        mapping_rows = []
         for item, ai in zip(unknown, ai_results):
             category = ai.get("category", "Other")
             confidence = float(ai.get("confidence", 0.7))
-
-            # Key on raw_name (consistent with Stage 1 lookup) but
-            # use clean_name for the human-readable display_name.
-            display = (item.get("clean_name") or item["raw_name"]).strip().title()
-            key = normalize_key(item["raw_name"])
-            mapping_rows.append((key, display, category, "ai"))
 
             results.append({
                 **item,
@@ -205,25 +198,9 @@ async def categorize_items(
                 "ai_confidence": confidence,
             })
 
-        # Batch-persist new mappings — never downgrade manual → ai
-        await db.executemany(
-            """
-            INSERT INTO item_mappings (normalized_key, display_name, category, source, times_seen)
-            VALUES (?, ?, ?, ?, 1)
-            ON CONFLICT(normalized_key) DO UPDATE SET
-                category   = CASE WHEN item_mappings.source = 'manual'
-                                  THEN item_mappings.category
-                                  ELSE excluded.category END,
-                source     = CASE WHEN item_mappings.source = 'manual'
-                                  THEN 'manual'
-                                  ELSE excluded.source END,
-                times_seen = times_seen + 1,
-                last_seen  = datetime('now')
-            """,
-            mapping_rows,
-        )
-
-    await db.commit()
+    # NOTE: AI mappings are NOT persisted here — they are saved when the
+    # receipt is approved (see persist_ai_mappings).  This prevents orphaned
+    # mappings when the user cancels/deletes an unreviewed receipt.
 
     # Restore original order
     order = {item["id"]: i for i, item in enumerate(items)}
@@ -297,3 +274,30 @@ async def apply_manual_correction(
     display = (row["clean_name"] or row["raw_name"]).strip().title()
     await save_mapping(db, row["raw_name"], new_category, source="manual", display_name=display)
     await db.commit()
+
+
+async def persist_ai_mappings(
+    db: aiosqlite.Connection,
+    receipt_id: int,
+    corrected_item_ids: set[int],
+):
+    """
+    Persist learned mappings for AI-categorized items on a receipt.
+
+    Called at approval time so that mappings are only created for receipts
+    the user actually kept.  Items in *corrected_item_ids* are skipped
+    because apply_manual_correction already saved their mapping.
+    """
+    async with db.execute(
+        """SELECT id, raw_name, clean_name, category
+           FROM line_items
+           WHERE receipt_id = ? AND category_source = 'ai'""",
+        (receipt_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    for row in rows:
+        if row["id"] in corrected_item_ids:
+            continue
+        display = (row["clean_name"] or row["raw_name"]).strip().title()
+        await save_mapping(db, row["raw_name"], row["category"], source="ai", display_name=display)
