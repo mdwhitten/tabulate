@@ -86,6 +86,16 @@ Each hooks file exports a `*Keys` object (e.g. `receiptKeys`, `categoryKeys`) us
 | `SaveReceiptBody` | `items[]`, `status`, `store_name?` |
 | `ItemMapping` | `source` field (NOT `category_source`) |
 
+## Testing
+
+Before pushing any changes:
+
+1. **Write tests** — check whether new or changed behavior can be covered by unit or integration tests. Backend tests live in `backend/tests/` and use pytest + aiosqlite in-memory DBs. Router tests use `httpx.AsyncClient` with `ASGITransport`. Use `unittest.mock.patch` / `AsyncMock` for external services (e.g. Claude API).
+2. **Run the full backend test suite** — `cd backend && python -m pytest tests/ -q` — and confirm all tests pass.
+3. **Run TypeScript compilation** — `./node_modules/.bin/tsc --noEmit` — and confirm no errors.
+
+Do not push if tests fail. Fix the issue first.
+
 ## Build Notes
 
 - TypeScript: `./node_modules/.bin/tsc -b && ./node_modules/.bin/vite build` (don't use `npm run build` in Docker — tsc not in PATH)
