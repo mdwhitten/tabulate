@@ -4,6 +4,8 @@ Tests for the receipts router — save, list, get, delete, and duplicate detecti
 Skips upload (requires OCR/Vision) and image/edge endpoints (require filesystem).
 Focuses on the DB-backed endpoints that are testable with in-memory SQLite.
 """
+import os
+import sys
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -37,7 +39,13 @@ async def insert_item(db, receipt_id, *, raw_name="ITEM", clean_name="Item",
 # ── Fixture ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def app(db):
+def app(db, tmp_path):
+    # Set IMAGE_DIR to a temp directory so the module-level os.makedirs
+    # doesn't fail in environments where /data is not writable (e.g. CI).
+    os.environ["IMAGE_DIR"] = str(tmp_path / "images")
+    # Force re-import so the module picks up the new IMAGE_DIR
+    sys.modules.pop("routers.receipts", None)
+
     from fastapi import FastAPI
     from routers.receipts import router
     from db.database import get_db
