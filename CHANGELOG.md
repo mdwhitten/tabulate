@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Topbar height increased for easier tapping on mobile (h-12 → h-14)
 - Back button enlarged with visible border outline for better mobile tap target
 - Receipt review footer streamlined — Cancel/Close removed (back button handles navigation), Rescan/Delete hidden on mobile (moved to topbar overflow), Save/Approve stretch full-width on small screens
-- AI-learned item mappings are now deferred until receipt approval — cancelling or deleting an unreviewed receipt no longer leaves orphaned mappings behind
+- All item mappings (both AI and manual corrections) are now deferred until receipt approval — cancelling or deleting an unreviewed receipt no longer leaves orphaned mappings behind
 
 ### Fixed
 - Receipt date field not tappable on mobile when empty
