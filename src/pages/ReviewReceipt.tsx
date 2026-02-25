@@ -370,13 +370,17 @@ export function ReviewReceipt({
                 onChange={e => { setReceiptDate(e.target.value); if (e.target.value) setDateError(false) }}
                 disabled={isVerified}
                 className={[
-                  'text-sm font-mono outline-none cursor-pointer disabled:cursor-default w-full',
-                  receiptDate
-                    ? 'bg-transparent border-none hover:text-gray-900'
-                    : 'bg-white border border-dashed rounded-lg px-2 py-1.5',
-                  dateError && !receiptDate
-                    ? 'text-red-500 border-red-300'
-                    : receiptDate ? 'text-gray-700' : 'text-gray-400 border-gray-300 hover:border-gray-400',
+                  'text-sm font-mono outline-none w-full',
+                  isVerified
+                    ? 'bg-transparent border-none cursor-default text-gray-700'
+                    : [
+                        'bg-white border rounded-lg px-2 py-1.5 cursor-pointer',
+                        dateError && !receiptDate
+                          ? 'text-red-500 border-red-300'
+                          : receiptDate
+                            ? 'text-gray-700 border-gray-200 hover:border-gray-400'
+                            : 'text-gray-400 border-dashed border-gray-300 hover:border-gray-400',
+                      ].join(' '),
                 ].join(' ')}
               />
               {!receiptDate && !isVerified && (
