@@ -55,7 +55,7 @@ export const AppShell = forwardRef<AppShellRef, AppShellProps>(function AppShell
         embedded={embedded}
       />
       {/* Content area — offset for fixed sidebar + topbar; bottom padding for tab bar */}
-      <main className={embedded ? 'pt-12 pb-20 min-h-screen' : 'lg:ml-60 pt-12 min-h-screen'}>
+      <main className={embedded ? 'pt-12 pb-28 min-h-screen' : 'lg:ml-60 pt-12 pb-6 min-h-screen'}>
         <div className="p-2 sm:p-4 lg:p-6 animate-[fadeUp_200ms_ease-out]">
           {children}
         </div>
