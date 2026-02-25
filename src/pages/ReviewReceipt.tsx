@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { CalendarDays, Store, X, RotateCcw, Save, Trash2, CheckCircle } from 'lucide-react'
+import { CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle } from 'lucide-react'
 import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
@@ -37,7 +37,7 @@ function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
         ...state,
         categoryCorrections: { ...state.categoryCorrections, [action.itemId]: action.category },
         items: state.items.map(it =>
-          it.id === action.itemId ? { ...it, category: action.category } : it
+          it.id === action.itemId ? { ...it, category: action.category, category_source: 'manual' as const } : it
         ),
       }
     case 'SET_PRICE':
@@ -90,7 +90,6 @@ interface ReviewReceiptProps {
   isFreshUpload?: boolean
   categories: Category[]
   onSave?: (body: SaveReceiptBody) => Promise<void>
-  onClose?: () => void
   onRescan?: () => void
   onDelete?: () => void
 }
@@ -100,7 +99,6 @@ export function ReviewReceipt({
   isFreshUpload = false,
   categories,
   onSave,
-  onClose,
   onRescan,
   onDelete,
 }: ReviewReceiptProps) {
@@ -176,16 +174,26 @@ export function ReviewReceipt({
     }
   }, [isDirty, isVerified])
 
-  // Expose save/approve to topbar via CustomEvents
+  // Expose save/approve/rescan/delete to topbar via CustomEvents
   const handleSaveRef = useRef<((approve: boolean) => Promise<void>) | null>(null)
+  const onRescanRef = useRef(onRescan)
+  const onDeleteRef = useRef(onDelete)
+  useEffect(() => { onRescanRef.current = onRescan }, [onRescan])
+  useEffect(() => { onDeleteRef.current = onDelete }, [onDelete])
   useEffect(() => {
-    const onSaveEvent   = () => { handleSaveRef.current?.(false).catch(console.error) }
+    const onSaveEvent    = () => { handleSaveRef.current?.(false).catch(console.error) }
     const onApproveEvent = () => { handleSaveRef.current?.(true).catch(console.error) }
+    const onRescanEvent  = () => { onRescanRef.current?.() }
+    const onDeleteEvent  = () => { onDeleteRef.current?.() }
     window.addEventListener('tabulate:save-receipt', onSaveEvent)
     window.addEventListener('tabulate:approve-receipt', onApproveEvent)
+    window.addEventListener('tabulate:rescan-receipt', onRescanEvent)
+    window.addEventListener('tabulate:delete-receipt', onDeleteEvent)
     return () => {
       window.removeEventListener('tabulate:save-receipt', onSaveEvent)
       window.removeEventListener('tabulate:approve-receipt', onApproveEvent)
+      window.removeEventListener('tabulate:rescan-receipt', onRescanEvent)
+      window.removeEventListener('tabulate:delete-receipt', onDeleteEvent)
     }
   }, [])
 
@@ -362,14 +370,35 @@ export function ReviewReceipt({
             <label className={`text-xs font-mono whitespace-nowrap ${dateError && !receiptDate ? 'text-red-500' : 'text-gray-500'}`}>
               Receipt date{!isVerified && <span className="text-red-400">*</span>}:
             </label>
-            <input
-              ref={dateInputRef}
-              type="date"
-              value={receiptDate}
-              onChange={e => { setReceiptDate(e.target.value); if (e.target.value) setDateError(false) }}
-              disabled={isVerified}
-              className={`text-sm font-mono bg-transparent border-none outline-none cursor-pointer hover:text-gray-900 disabled:cursor-default ${dateError && !receiptDate ? 'text-red-500 placeholder:text-red-300' : 'text-gray-700'}`}
-            />
+            <div className="relative flex-1 min-w-0">
+              <input
+                ref={dateInputRef}
+                type="date"
+                value={receiptDate}
+                onChange={e => { setReceiptDate(e.target.value); if (e.target.value) setDateError(false) }}
+                disabled={isVerified}
+                className={[
+                  'text-sm font-mono outline-none w-full',
+                  isVerified
+                    ? 'bg-transparent border-none cursor-default text-gray-700'
+                    : [
+                        'bg-white border rounded-lg px-2 py-1.5 cursor-pointer',
+                        dateError && !receiptDate
+                          ? 'text-red-500 border-red-300'
+                          : receiptDate
+                            ? 'text-gray-700 border-gray-200 hover:border-gray-400'
+                            : 'text-gray-400 border-dashed border-gray-300 hover:border-gray-400',
+                      ].join(' '),
+                ].join(' ')}
+              />
+              {!receiptDate && !isVerified && (
+                <span
+                  className={`absolute left-2.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none ${dateError ? 'text-red-400' : 'text-gray-400'}`}
+                >
+                  Tap to add date
+                </span>
+              )}
+            </div>
             {dateError && !receiptDate && (
               <span className="text-xs text-red-500 whitespace-nowrap">Required</span>
             )}
@@ -394,8 +423,9 @@ export function ReviewReceipt({
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 flex-wrap">
-            <div className="flex gap-2 flex-wrap">
+          <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-3 border-t border-gray-100 bg-gray-50">
+            {/* Secondary actions — desktop only (mobile uses topbar overflow) */}
+            <div className="hidden sm:flex gap-2">
               {isFreshUpload && (
                 <button onClick={onRescan}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
@@ -403,11 +433,6 @@ export function ReviewReceipt({
                   Rescan
                 </button>
               )}
-              <button onClick={onClose}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                <X className="w-3.5 h-3.5" />
-                {isVerified ? 'Close' : 'Cancel'}
-              </button>
               {onDelete && (
                 <button onClick={onDelete}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-500 bg-white border border-red-100 rounded-lg hover:bg-red-50 transition-colors">
@@ -416,23 +441,24 @@ export function ReviewReceipt({
                 </button>
               )}
             </div>
+            {/* Primary actions */}
             {!isVerified ? (
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-1 sm:flex-none sm:justify-end">
                 <button onClick={() => handleSave(false)} disabled={!isDirty || saving}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                  <Save className="w-3.5 h-3.5" />
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                  <Save className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                   {saving ? 'Saving…' : 'Save'}
                 </button>
                 <button onClick={() => handleSave(true)} disabled={saving}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors shadow-sm">
-                  <CheckCircle className="w-3.5 h-3.5" />
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors shadow-sm">
+                  <CheckCircle className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                   Approve
                 </button>
               </div>
             ) : isDirty && (
               <button onClick={() => handleSave(false)} disabled={saving}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                <Save className="w-3.5 h-3.5" />
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Save className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                 {saving ? 'Saving…' : 'Save Categories'}
               </button>
             )}

@@ -1,9 +1,9 @@
-import { useState, useMemo, useRef } from 'react'
-import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
-import { useMonthlyTrends } from '../hooks/useTrends'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { ChevronLeft, ChevronRight, ChevronDown, Loader2, X } from 'lucide-react'
+import { useMonthlyTrends, useCategoryItems } from '../hooks/useTrends'
 import { useCategoryList } from '../hooks/useCategories'
 import { catColor, catIcon, fmt, fmtShort } from '../lib/utils'
-import type { Category, TrendsResponse, MonthSummary } from '../types'
+import type { Category, CategoryItemDetail, TrendsResponse, MonthSummary } from '../types'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -218,6 +218,116 @@ function StackedBarChart({ data, selectedIdx, onSelect, cats }: BarChartProps) {
   )
 }
 
+// ── Category items list (shared content) ──────────────────────────────────
+
+interface CategoryItemsListProps {
+  items: CategoryItemDetail[]
+  isLoading: boolean
+  category: string
+  cats?: Category[]
+}
+
+function CategoryItemsList({ items, isLoading, category, cats }: CategoryItemsListProps) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-4 gap-2 text-gray-400">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        <span className="text-xs">Loading items…</span>
+      </div>
+    )
+  }
+
+  if (items.length === 0) {
+    return (
+      <p className="py-4 text-center text-xs text-gray-400">No items for this category.</p>
+    )
+  }
+
+  const total = items.reduce((s, it) => s + it.price * it.quantity, 0)
+
+  return (
+    <div className="space-y-0.5">
+      {items.map((it, i) => (
+        <div key={i} className="flex items-center gap-3 py-1.5 px-2 rounded-lg text-sm">
+          <span className="flex-1 min-w-0 text-gray-600 truncate">{it.clean_name || it.raw_name}</span>
+          {it.quantity > 1 && (
+            <span className="text-xs text-gray-400 font-mono shrink-0">x{it.quantity}</span>
+          )}
+          <span className="font-mono tabular-nums text-gray-700 w-16 text-right shrink-0">
+            {fmt(it.price * it.quantity)}
+          </span>
+          {it.store_name && (
+            <span className="text-xs text-gray-400 truncate max-w-20 shrink-0 hidden sm:inline">
+              {it.store_name}
+            </span>
+          )}
+        </div>
+      ))}
+      <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 text-xs text-gray-500">
+        <span>{items.length} item{items.length !== 1 ? 's' : ''}</span>
+        <span className="font-mono font-semibold tabular-nums" style={{ color: catColor(category, cats) }}>
+          {fmt(total)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Mobile bottom sheet ───────────────────────────────────────────────────
+
+interface CategoryItemsSheetProps {
+  category: string
+  monthLabel: string
+  items: CategoryItemDetail[]
+  isLoading: boolean
+  cats?: Category[]
+  onClose: () => void
+}
+
+function CategoryItemsSheet({ category, monthLabel, items, isLoading, cats, onClose }: CategoryItemsSheetProps) {
+  const backdropRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  return (
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm"
+      onClick={e => { if (e.target === backdropRef.current) onClose() }}
+    >
+      <div className="bg-white w-full max-w-lg rounded-t-2xl shadow-2xl animate-slide-up safe-bottom max-h-[70vh] flex flex-col">
+        {/* Drag handle */}
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full bg-gray-300" />
+        </div>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pb-3">
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <span className="text-xl">{catIcon(category, cats)}</span>
+            <span className="truncate">{category}</span>
+            <span className="text-sm font-normal text-gray-400">{monthLabel}</span>
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="px-5 pb-5 overflow-y-auto">
+          <CategoryItemsList items={items} isLoading={isLoading} category={category} cats={cats} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Month breakdown ────────────────────────────────────────────────────────
 
 interface BreakdownEntry {
@@ -229,14 +339,18 @@ interface BreakdownEntry {
 }
 
 interface BreakdownProps {
-  month:     MonthSummary
-  prevMonth: MonthSummary | null
-  allMonths: MonthSummary[]
-  selIdx:    number
-  cats?:     Category[]
+  month:            MonthSummary
+  prevMonth:        MonthSummary | null
+  allMonths:        MonthSummary[]
+  selIdx:           number
+  cats?:            Category[]
+  expandedCategory: string | null
+  onToggleCategory: (cat: string) => void
+  categoryItems:    CategoryItemDetail[]
+  categoryItemsLoading: boolean
 }
 
-function MonthBreakdown({ month, prevMonth, allMonths, selIdx, cats }: BreakdownProps) {
+function MonthBreakdown({ month, prevMonth, allMonths, selIdx, cats, expandedCategory, onToggleCategory, categoryItems, categoryItemsLoading }: BreakdownProps) {
   const entries = useMemo<BreakdownEntry[]>(() => {
     const allCats = new Set([
       ...Object.keys(month.by_category),
@@ -281,45 +395,76 @@ function MonthBreakdown({ month, prevMonth, allMonths, selIdx, cats }: Breakdown
         const changeDown = entry.changePct != null && entry.changePct < 0
         const changeUp   = entry.changePct != null && entry.changePct > 0
         const changeNone = entry.changePct == null || entry.changePct === 0
+        const isExpanded = expandedCategory === entry.category
 
         return (
           <div key={entry.category}
-            className="flex items-center gap-3 py-2 px-1 rounded-xl hover:bg-gray-50 transition-colors"
             style={{ opacity: 0, animation: `fadeUp 180ms ease-out ${i * 35}ms forwards` }}>
 
-            <div className="flex items-center gap-2 w-36 shrink-0">
-              <span className="text-base leading-none">{catIcon(entry.category, cats)}</span>
-              <span className="text-sm text-gray-700 truncate">{entry.category}</span>
-            </div>
+            <div
+              className={[
+                'flex items-center gap-3 py-2 px-1 rounded-xl cursor-pointer transition-colors',
+                isExpanded ? 'bg-gray-50' : 'hover:bg-gray-50',
+              ].join(' ')}
+              onClick={() => !isZero && onToggleCategory(entry.category)}
+              role="button"
+              aria-expanded={isExpanded}
+            >
 
-            <div className="flex-1 min-w-0">
-              <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                {!isZero && (
-                  <div className="h-full rounded-full transition-[width] duration-500 ease-out"
-                    style={{ width: `${entry.sharePct}%`, background: catColor(entry.category, cats) }} />
-                )}
+              <div className="flex items-center gap-2 w-36 shrink-0">
+                <span className="text-base leading-none">{catIcon(entry.category, cats)}</span>
+                <span className="text-sm text-gray-700 truncate">{entry.category}</span>
               </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  {!isZero && (
+                    <div className="h-full rounded-full transition-[width] duration-500 ease-out"
+                      style={{ width: `${entry.sharePct}%`, background: catColor(entry.category, cats) }} />
+                  )}
+                </div>
+              </div>
+
+              <span className="text-sm font-mono tabular-nums text-gray-800 w-16 text-right shrink-0">
+                {isZero ? '—' : fmt(entry.amount)}
+              </span>
+
+              <span className="text-sm font-mono tabular-nums text-gray-400 w-16 text-right shrink-0 hidden sm:inline">
+                {entry.avgAmount > 0 ? fmt(entry.avgAmount) : '—'}
+              </span>
+
+              <span className={[
+                'text-xs font-mono tabular-nums w-14 text-right shrink-0',
+                changeDown ? 'text-emerald-500' : '',
+                changeUp   ? 'text-red-400'     : '',
+                changeNone ? 'text-gray-400'    : '',
+              ].join(' ')}>
+                {entry.changePct == null ? '—'
+                  : changeNone ? '→ 0%'
+                  : <>{changeDown ? '↓' : '↑'} {fmtPct(Math.abs(entry.changePct))}</>
+                }
+              </span>
+
+              {!isZero && (
+                <ChevronDown className={[
+                  'w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200',
+                  isExpanded ? 'rotate-180' : '',
+                ].join(' ')} />
+              )}
             </div>
 
-            <span className="text-sm font-mono tabular-nums text-gray-800 w-16 text-right shrink-0">
-              {isZero ? '—' : fmt(entry.amount)}
-            </span>
-
-            <span className="text-sm font-mono tabular-nums text-gray-400 w-16 text-right shrink-0 hidden sm:inline">
-              {entry.avgAmount > 0 ? fmt(entry.avgAmount) : '—'}
-            </span>
-
-            <span className={[
-              'text-xs font-mono tabular-nums w-14 text-right shrink-0',
-              changeDown ? 'text-emerald-500' : '',
-              changeUp   ? 'text-red-400'     : '',
-              changeNone ? 'text-gray-400'    : '',
-            ].join(' ')}>
-              {entry.changePct == null ? '—'
-                : changeNone ? '→ 0%'
-                : <>{changeDown ? '↓' : '↑'} {fmtPct(Math.abs(entry.changePct))}</>
-              }
-            </span>
+            {/* Desktop inline expansion */}
+            {isExpanded && (
+              <div className="hidden sm:block ml-8 mr-1 mb-2 mt-1 pl-4 border-l-2 rounded-b-lg"
+                style={{ borderColor: catColor(entry.category, cats) + '40' }}>
+                <CategoryItemsList
+                  items={categoryItems}
+                  isLoading={categoryItemsLoading}
+                  category={entry.category}
+                  cats={cats}
+                />
+              </div>
+            )}
           </div>
         )
       })}
@@ -335,6 +480,7 @@ export function Trends() {
 
   const lastIdx = (data?.months.length ?? 1) - 1
   const [selectedIdx, setSelectedIdx] = useState(lastIdx)
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
 
   // Reset to latest when data loads
   const months     = data?.months ?? []
@@ -345,6 +491,26 @@ export function Trends() {
   const prevMonth     = safeIdx > 0 ? months[safeIdx - 1] : null
   const canGoPrev     = safeIdx > 0
   const canGoNext     = safeIdx < months.length - 1
+
+  // Reset expanded category when month changes
+  const prevSafeIdx = useRef(safeIdx)
+  useEffect(() => {
+    if (prevSafeIdx.current !== safeIdx) {
+      setExpandedCategory(null)
+      prevSafeIdx.current = safeIdx
+    }
+  }, [safeIdx])
+
+  // Fetch items for the expanded category
+  const { data: categoryItems = [], isLoading: categoryItemsLoading } = useCategoryItems(
+    selectedMonth?.year ?? 0,
+    selectedMonth?.month ?? 0,
+    expandedCategory,
+  )
+
+  function handleToggleCategory(cat: string) {
+    setExpandedCategory(prev => prev === cat ? null : cat)
+  }
 
   if (isLoading) {
     return (
@@ -444,16 +610,35 @@ export function Trends() {
               </div>
             </div>
 
-            <MonthBreakdown month={selectedMonth} prevMonth={prevMonth} allMonths={months} selIdx={safeIdx} cats={cats} />
+            <MonthBreakdown
+              month={selectedMonth} prevMonth={prevMonth} allMonths={months} selIdx={safeIdx} cats={cats}
+              expandedCategory={expandedCategory} onToggleCategory={handleToggleCategory}
+              categoryItems={categoryItems} categoryItemsLoading={categoryItemsLoading}
+            />
 
-            {prevMonth == null && (
-              <p className="mt-3 text-[11px] text-gray-400 text-center">
-                No previous month to compare against.
-              </p>
-            )}
+            {/* Hint */}
+            <p className="mt-3 text-[11px] text-gray-400 text-center">
+              {prevMonth == null
+                ? 'No previous month to compare against.'
+                : 'Tap a category to see individual items.'}
+            </p>
           </div>
         )}
       </div>
+
+      {/* Mobile bottom sheet */}
+      {expandedCategory && selectedMonth && (
+        <div className="sm:hidden">
+          <CategoryItemsSheet
+            category={expandedCategory}
+            monthLabel={selectedMonth.month_label}
+            items={categoryItems}
+            isLoading={categoryItemsLoading}
+            cats={cats}
+            onClose={() => setExpandedCategory(null)}
+          />
+        </div>
+      )}
     </div>
   )
 }

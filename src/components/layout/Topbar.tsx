@@ -12,7 +12,7 @@ interface TopbarProps {
 export function Topbar({ title, left, right, onMenuClick, embedded }: TopbarProps) {
   return (
     <header className={[
-      'fixed top-0 right-0 h-12 bg-white/80 backdrop-blur-sm border-b border-gray-200/70 flex items-center px-4 lg:px-6 gap-3 z-10',
+      'fixed top-0 right-0 h-14 bg-white/80 backdrop-blur-sm border-b border-gray-200/70 flex items-center px-4 lg:px-6 gap-3 z-10',
       embedded ? 'left-0' : 'left-0 lg:left-60',
     ].join(' ')}>
       {/* Mobile hamburger — hidden in embedded (HA) mode */}
