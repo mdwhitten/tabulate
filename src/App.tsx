@@ -16,7 +16,7 @@ import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
 import type { Receipt, SaveReceiptBody, DuplicateMatch } from './types'
-import { ArrowLeft, Save, Camera, CheckCircle } from 'lucide-react'
+import { ArrowLeft, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2 } from 'lucide-react'
 import './index.css'
 
 // ── Ingress-aware URL helpers ─────────────────────────────────────────────────
@@ -181,7 +181,6 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDu
       isFreshUpload={freshResult != null}
       categories={categories}
       onSave={handleSave}
-      onClose={onClose}
       onRescan={onRescan}
       onDelete={handleDelete}
     />
@@ -297,14 +296,14 @@ export default function App() {
         topbarLeft={isReview ? (
           <button
             onClick={() => navigate('receipts')}
-            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors mr-2"
+            className="flex items-center justify-center w-9 h-9 sm:w-auto sm:h-auto sm:gap-1.5 sm:px-2 sm:py-1.5 text-sm text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors mr-1 sm:mr-2"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-5 h-5 sm:w-4 sm:h-4" />
             <span className="hidden sm:inline">All Receipts</span>
           </button>
         ) : undefined}
         topbarRight={isReview ? (
-          <TopbarReceiptActions receiptId={receiptId} />
+          <TopbarReceiptActions receiptId={receiptId} isFreshUpload={freshResult != null} />
         ) : !INGRESS_PREFIX ? (
           <button
             onClick={() => setUploadOpen(true)}
@@ -361,11 +360,13 @@ export default function App() {
   )
 }
 
-// ── Topbar receipt actions (Save + Approve) ──────────────────────────────────
-function TopbarReceiptActions({ receiptId }: { receiptId: number | null }) {
+// ── Topbar receipt actions ────────────────────────────────────────────────────
+function TopbarReceiptActions({ receiptId, isFreshUpload }: { receiptId: number | null; isFreshUpload: boolean }) {
   const [visible, setVisible]   = useState(false)
   const [dirty, setDirty]       = useState(false)
   const [verified, setVerified] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const poll = () => {
@@ -379,13 +380,24 @@ function TopbarReceiptActions({ receiptId }: { receiptId: number | null }) {
     return () => clearInterval(id)
   }, [receiptId])
 
+  // Close overflow menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
+
   if (!receiptId || !visible) return null
 
   return (
     <div className="flex items-center gap-2">
+      {/* ── Desktop: Save + Approve with labels ── */}
       <button
         disabled={!dirty}
-        className="flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg border transition-colors text-gray-700 bg-white border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="hidden sm:flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg border transition-colors text-gray-700 bg-white border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
         onClick={() => window.dispatchEvent(new CustomEvent('tabulate:save-receipt'))}
       >
         <Save className="w-4 h-4" />
@@ -393,11 +405,57 @@ function TopbarReceiptActions({ receiptId }: { receiptId: number | null }) {
       </button>
       {!verified && (
         <button
-          className="flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg transition-colors text-white bg-green-600 hover:bg-green-700 shadow-sm shadow-green-600/30"
+          className="hidden sm:flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg transition-colors text-white bg-green-600 hover:bg-green-700 shadow-sm shadow-green-600/30"
           onClick={() => window.dispatchEvent(new CustomEvent('tabulate:approve-receipt'))}
         >
           <CheckCircle className="w-4 h-4" />
           Approve
+        </button>
+      )}
+
+      {/* ── Mobile: overflow menu + approve icon ── */}
+      <div ref={menuRef} className="relative sm:hidden">
+        <button
+          onClick={() => setMenuOpen(o => !o)}
+          className="flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+        >
+          <MoreVertical className="w-5 h-5" />
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-full mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+            {isFreshUpload && (
+              <button
+                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                onClick={() => { setMenuOpen(false); window.dispatchEvent(new CustomEvent('tabulate:rescan-receipt')) }}
+              >
+                <RotateCcw className="w-4 h-4" />
+                Rescan
+              </button>
+            )}
+            <button
+              disabled={!dirty}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              onClick={() => { setMenuOpen(false); window.dispatchEvent(new CustomEvent('tabulate:save-receipt')) }}
+            >
+              <Save className="w-4 h-4" />
+              Save
+            </button>
+            <button
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-red-500 hover:bg-red-50"
+              onClick={() => { setMenuOpen(false); window.dispatchEvent(new CustomEvent('tabulate:delete-receipt')) }}
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+      {!verified && (
+        <button
+          className="sm:hidden flex items-center justify-center w-9 h-9 rounded-lg text-white bg-green-600 hover:bg-green-700 shadow-sm shadow-green-600/30 transition-colors"
+          onClick={() => window.dispatchEvent(new CustomEvent('tabulate:approve-receipt'))}
+        >
+          <CheckCircle className="w-5 h-5" />
         </button>
       )}
     </div>
