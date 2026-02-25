@@ -362,14 +362,31 @@ export function ReviewReceipt({
             <label className={`text-xs font-mono whitespace-nowrap ${dateError && !receiptDate ? 'text-red-500' : 'text-gray-500'}`}>
               Receipt date{!isVerified && <span className="text-red-400">*</span>}:
             </label>
-            <input
-              ref={dateInputRef}
-              type="date"
-              value={receiptDate}
-              onChange={e => { setReceiptDate(e.target.value); if (e.target.value) setDateError(false) }}
-              disabled={isVerified}
-              className={`text-sm font-mono bg-transparent border-none outline-none cursor-pointer hover:text-gray-900 disabled:cursor-default ${dateError && !receiptDate ? 'text-red-500 placeholder:text-red-300' : 'text-gray-700'}`}
-            />
+            <div className="relative flex-1 min-w-0">
+              <input
+                ref={dateInputRef}
+                type="date"
+                value={receiptDate}
+                onChange={e => { setReceiptDate(e.target.value); if (e.target.value) setDateError(false) }}
+                disabled={isVerified}
+                className={[
+                  'text-sm font-mono outline-none cursor-pointer disabled:cursor-default w-full',
+                  receiptDate
+                    ? 'bg-transparent border-none hover:text-gray-900'
+                    : 'bg-white border border-dashed rounded-lg px-2 py-1.5',
+                  dateError && !receiptDate
+                    ? 'text-red-500 border-red-300'
+                    : receiptDate ? 'text-gray-700' : 'text-gray-400 border-gray-300 hover:border-gray-400',
+                ].join(' ')}
+              />
+              {!receiptDate && !isVerified && (
+                <span
+                  className={`absolute left-2.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none ${dateError ? 'text-red-400' : 'text-gray-400'}`}
+                >
+                  Tap to add date
+                </span>
+              )}
+            </div>
             {dateError && !receiptDate && (
               <span className="text-xs text-red-500 whitespace-nowrap">Required</span>
             )}
