@@ -70,12 +70,11 @@ async def diagnose():
         "path": IMAGE_DIR,
     }
 
-    # Anthropic key
+    # Anthropic key (never expose key material — only report presence)
     key = _os.environ.get("ANTHROPIC_API_KEY", "")
     results["anthropic_key"] = {
         "ok": bool(key and key.startswith("sk-")),
         "set": bool(key),
-        "hint": (key[:12] + "…") if key else "(not set)",
     }
 
     all_ok = all(v.get("ok") for v in results.values())
@@ -100,7 +99,16 @@ async def upload_receipt(
     from PIL import Image as _PILImage, ImageOps as _ImageOps
     import io as _io
 
-    contents = await file.read()
+    # Validate file type before reading
+    _ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/tiff", "image/heic", "image/heif"}
+    if file.content_type and file.content_type not in _ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=422, detail=f"Unsupported file type: {file.content_type}")
+
+    # Read with a size cap (20 MB matches nginx client_max_body_size)
+    _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+    contents = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
 
     # Always normalise EXIF orientation (phone photos are often rotated in metadata)
     # and re-encode as JPEG so downstream tools see correct pixel orientation.
@@ -363,28 +371,28 @@ async def save_receipt(
         except (ValueError, TypeError):
             pass
 
-    new_status = "'verified'" if body.approve else "status"
+    new_status = "verified" if body.approve else None
 
     # If the user manually entered the total, store it and update
     if body.manual_total is not None:
         await db.execute(
-            f"""UPDATE receipts
-               SET status = {new_status},
+            """UPDATE receipts
+               SET status = COALESCE(?, status),
                    total = ?,
                    total_verified = 1,
                    receipt_date = COALESCE(?, receipt_date),
                    store_name = COALESCE(?, store_name)
                WHERE id = ?""",
-            (round(body.manual_total, 2), body.receipt_date, body.store_name, receipt_id),
+            (new_status, round(body.manual_total, 2), body.receipt_date, body.store_name, receipt_id),
         )
     else:
         await db.execute(
-            f"""UPDATE receipts
-               SET status = {new_status},
+            """UPDATE receipts
+               SET status = COALESCE(?, status),
                    receipt_date = COALESCE(?, receipt_date),
                    store_name = COALESCE(?, store_name)
                WHERE id = ?""",
-            (body.receipt_date, body.store_name, receipt_id),
+            (new_status, body.receipt_date, body.store_name, receipt_id),
         )
     await db.commit()
 
@@ -533,7 +541,11 @@ async def delete_receipt(
 
 # ── Image Serving ─────────────────────────────────────────────────────────────
 
+_ALLOWED_IMAGE_FIELDS = frozenset({"image_path", "thumbnail_path"})
+
 async def _get_image_path(receipt_id: int, db: aiosqlite.Connection, field: str) -> str:
+    if field not in _ALLOWED_IMAGE_FIELDS:
+        raise ValueError(f"Invalid image field: {field!r}")
     async with db.execute(
         f"SELECT {field} FROM receipts WHERE id = ?", (receipt_id,)
     ) as cur:
@@ -543,6 +555,11 @@ async def _get_image_path(receipt_id: int, db: aiosqlite.Connection, field: str)
     path = row[field]
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Image file not found")
+    # Ensure the resolved path is within IMAGE_DIR to prevent path traversal
+    real_path = os.path.realpath(path)
+    real_image_dir = os.path.realpath(IMAGE_DIR)
+    if not real_path.startswith(real_image_dir + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
     return path
 
 
@@ -575,6 +592,11 @@ async def get_receipt_thumbnail(
     path = row["thumbnail_path"] or row["image_path"]
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Image file not found")
+    # Ensure the resolved path is within IMAGE_DIR to prevent path traversal
+    real_path = os.path.realpath(path)
+    real_image_dir = os.path.realpath(IMAGE_DIR)
+    if not real_path.startswith(real_image_dir + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     return FileResponse(path, media_type="image/jpeg", headers={
         "Cache-Control": "public, max-age=86400",
@@ -619,10 +641,13 @@ async def receipt_detect_edges(
     return {"corners": corners}
 
 
+class CropBody(BaseModel):
+    corners: list[list[float]]
+
 @router.post("/{receipt_id}/crop")
 async def crop_receipt_image(
     receipt_id: int,
-    body: dict,
+    body: CropBody,
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """
@@ -635,9 +660,9 @@ async def crop_receipt_image(
     from PIL import Image as PILImage
     import io as _io
 
-    corners = body.get("corners")
-    if not corners or len(corners) != 4:
-        raise HTTPException(status_code=422, detail="Provide exactly 4 corners")
+    corners = body.corners
+    if len(corners) != 4 or not all(len(c) == 2 for c in corners):
+        raise HTTPException(status_code=422, detail="Provide exactly 4 corners as [x,y] pairs")
 
     path = await _get_image_path(receipt_id, db, "image_path")
     with open(path, "rb") as f:
