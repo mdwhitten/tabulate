@@ -53,8 +53,8 @@ test.describe('Navigation & Dashboard', () => {
     await page.goto('/receipts/3')
     // Pending receipt: store name and item names are editable inputs (locked=false)
     await expect(page.getByPlaceholder('Store name')).toHaveValue('Costco')
-    // Items section loaded (mobile renders <p> text, desktop renders <input>)
-    await expect(page.getByText('Subtotal').first()).toBeVisible()
+    // Items section loaded
+    await expect(page.getByRole('button', { name: /Approve/i }).first()).toBeVisible()
   })
 
   test('dashboard "View all" links navigate correctly', async ({ page }) => {

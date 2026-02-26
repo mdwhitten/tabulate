@@ -170,8 +170,8 @@ test.describe('Review Receipt Page', () => {
 
     await page.goto('/receipts/3')
 
-    // Wait for the page to finish loading (mobile renders items as text, desktop as input)
-    await expect(page.getByText('Subtotal').first()).toBeVisible()
+    // Wait for the page to finish loading
+    await expect(page.getByPlaceholder('Store name')).toBeVisible()
 
     // Make a change — update the store name to trigger dirty state
     const storeInput = page.getByPlaceholder('Store name')
@@ -203,7 +203,7 @@ test.describe('Review Receipt Page', () => {
     })
 
     await page.goto('/receipts/3')
-    await expect(page.getByText('Subtotal').first()).toBeVisible()
+    await expect(page.getByPlaceholder('Store name')).toBeVisible()
 
     // Click Approve — use first() because topbar and footer both show Approve
     const approveButton = page.getByRole('button', { name: /Approve/i }).first()
