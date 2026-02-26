@@ -679,3 +679,234 @@ class TestSaveReceiptDateValidation:
         async with db.execute("SELECT receipt_date FROM receipts WHERE id = ?", (rid,)) as cur:
             row = await cur.fetchone()
         assert row["receipt_date"] == "2026-02-20"
+
+
+# ── Receipt date format validation ────────────────────────────────────────────
+
+class TestSaveReceiptDateFormat:
+    """Validate that receipt_date must be ISO YYYY-MM-DD when provided."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_iso_date(self, db, app):
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "receipt_date": "02/25/2026",
+            })
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_rejects_garbage_date(self, db, app):
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "receipt_date": "not-a-date",
+            })
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_month(self, db, app):
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "receipt_date": "2026-13-01",
+            })
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_accepts_valid_iso_date(self, db, app):
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "receipt_date": "2026-02-25",
+            })
+        assert resp.status_code == 200
+
+
+# ── Price corrections scoped to receipt ───────────────────────────────────────
+
+class TestPriceCorrectionScope:
+    """Price corrections must only affect items belonging to the target receipt."""
+
+    @pytest.mark.asyncio
+    async def test_price_correction_cannot_modify_other_receipt_items(self, db, app):
+        """A price correction for an item ID on another receipt should be silently ignored."""
+        rid1 = await insert_receipt(db, store_name="Receipt1")
+        rid2 = await insert_receipt(db, store_name="Receipt2", receipt_date="2026-02-16")
+        iid2 = await insert_item(db, rid2, raw_name="VICTIM", price=5.00)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Try to change an item on receipt2 via receipt1's save endpoint
+            resp = await client.post(f"/api/receipts/{rid1}/save", json={
+                "price_corrections": {str(iid2): 99.99}
+            })
+
+        assert resp.status_code == 200
+        # The item on receipt2 should be unchanged
+        async with db.execute("SELECT price FROM line_items WHERE id = ?", (iid2,)) as cur:
+            row = await cur.fetchone()
+        assert row["price"] == 5.00
+
+    @pytest.mark.asyncio
+    async def test_price_correction_works_on_own_receipt(self, db, app):
+        rid = await insert_receipt(db)
+        iid = await insert_item(db, rid, price=5.00)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "price_corrections": {str(iid): 7.50}
+            })
+
+        assert resp.status_code == 200
+        async with db.execute("SELECT price FROM line_items WHERE id = ?", (iid,)) as cur:
+            row = await cur.fetchone()
+        assert row["price"] == 7.50
+
+
+# ── New item validation ───────────────────────────────────────────────────────
+
+class TestNewItemValidation:
+    """Validate new items added during save."""
+
+    @pytest.mark.asyncio
+    async def test_accepts_negative_price_for_discounts(self, db, app):
+        """Negative prices are valid — they represent coupons/discounts on receipts."""
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "new_items": [{"name": "Coupon", "price": -2.00, "category": "Other"}]
+            })
+        assert resp.status_code == 200
+        async with db.execute(
+            "SELECT raw_name, price FROM line_items WHERE receipt_id = ?", (rid,)
+        ) as cur:
+            row = await cur.fetchone()
+        assert row["raw_name"] == "Coupon"
+        assert row["price"] == -2.00
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_category(self, db, app):
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "new_items": [{"name": "Item", "price": 3.00, "category": "Nonexistent"}]
+            })
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_accepts_valid_new_item(self, db, app):
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "new_items": [{"name": "Apples", "price": 3.99, "category": "Produce"}]
+            })
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_rejects_disabled_category(self, db, app):
+        """Items cannot be assigned to a disabled category."""
+        # Disable "Frozen"
+        await db.execute("UPDATE categories SET is_disabled = 1 WHERE name = 'Frozen'")
+        await db.commit()
+        rid = await insert_receipt(db)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "new_items": [{"name": "Ice Cream", "price": 4.99, "category": "Frozen"}]
+            })
+        assert resp.status_code == 422
+
+
+# ── Manual total validation ───────────────────────────────────────────────────
+
+class TestManualTotalValidation:
+
+    @pytest.mark.asyncio
+    async def test_rejects_negative_total(self, db, app):
+        rid = await insert_receipt(db, total=None)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "manual_total": -10.00
+            })
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_accepts_zero_total(self, db, app):
+        rid = await insert_receipt(db, total=None)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "manual_total": 0
+            })
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_accepts_normal_total(self, db, app):
+        rid = await insert_receipt(db, total=None)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "manual_total": 42.99
+            })
+        assert resp.status_code == 200
+        async with db.execute("SELECT total FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        assert row["total"] == 42.99
+
+
+# ── Store name normalization ──────────────────────────────────────────────────
+
+class TestStoreNameValidation:
+
+    @pytest.mark.asyncio
+    async def test_empty_string_store_name_not_stored(self, db, app):
+        """Sending store_name='' should not overwrite an existing name."""
+        rid = await insert_receipt(db, store_name="Costco")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "store_name": "",
+            })
+        assert resp.status_code == 200
+        async with db.execute("SELECT store_name FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        assert row["store_name"] == "Costco"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_store_name_treated_as_null(self, db, app):
+        """Sending store_name='  ' should be treated the same as null."""
+        rid = await insert_receipt(db, store_name="Costco")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "store_name": "   ",
+            })
+        assert resp.status_code == 200
+        async with db.execute("SELECT store_name FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        assert row["store_name"] == "Costco"

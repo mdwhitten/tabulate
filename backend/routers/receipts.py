@@ -324,9 +324,25 @@ async def save_receipt(
     Apply corrections, optionally override the total.
     If approve=True, mark receipt as verified (locked). Otherwise keep current status (draft save).
     """
-    # Normalize empty-string dates to None so COALESCE works correctly
+    # Normalize empty strings to None so COALESCE works correctly
     if body.receipt_date is not None and not body.receipt_date.strip():
         body.receipt_date = None
+    if body.store_name is not None and not body.store_name.strip():
+        body.store_name = None
+
+    # Validate receipt_date is ISO format (YYYY-MM-DD) when provided
+    if body.receipt_date is not None:
+        try:
+            datetime.strptime(body.receipt_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid date format: '{body.receipt_date}'. Expected YYYY-MM-DD.",
+            )
+
+    # Validate manual_total is a reasonable positive number
+    if body.manual_total is not None and body.manual_total < 0:
+        raise HTTPException(status_code=422, detail="Manual total cannot be negative.")
 
     async with db.execute("SELECT id, receipt_date FROM receipts WHERE id = ?", (receipt_id,)) as cur:
         row = await cur.fetchone()
@@ -341,6 +357,18 @@ async def save_receipt(
                 status_code=422,
                 detail="Cannot approve a receipt without a date. Please set a receipt date.",
             )
+
+    # Validate new_items: validate categories exist and are enabled
+    if body.new_items:
+        async with db.execute("SELECT name FROM categories WHERE is_disabled = 0") as cur:
+            valid_cats = {r["name"] for r in await cur.fetchall()}
+        for new_item in body.new_items:
+            cat = new_item.category or "Other"
+            if cat not in valid_cats:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid category '{cat}' for item '{new_item.name}'.",
+                )
 
     # Delete items the user removed
     for item_id in body.deleted_item_ids:
@@ -380,8 +408,8 @@ async def save_receipt(
             price_val = round(float(new_price), 2)
             if price_val > 0:
                 await db.execute(
-                    "UPDATE line_items SET price = ? WHERE id = ?",
-                    (price_val, int(item_id_str)),
+                    "UPDATE line_items SET price = ? WHERE id = ? AND receipt_id = ?",
+                    (price_val, int(item_id_str), receipt_id),
                 )
         except (ValueError, TypeError):
             pass
