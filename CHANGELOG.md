@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Edit button on verified receipts — unlocks date, store name, and categories for correction while keeping items, prices, and totals locked
 - Categorization failure detection with retry banner on receipt review
+- GitHub Actions workflow for Playwright E2E tests with artifact upload
+- E2E test coverage for editing approved receipts (click Edit, change fields, save) on desktop and mobile
+- Playwright `mobile-chrome` (Pixel 5) project for mobile viewport E2E testing
 
 ### Changed
 - Verified receipts are now fully read-only by default (categories included); editing requires explicitly tapping Edit
