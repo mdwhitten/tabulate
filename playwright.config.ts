@@ -25,7 +25,7 @@ export default defineConfig({
       name: 'embedded',
       use: {
         ...devices['Pixel 5'],
-        baseURL: 'http://localhost:5173/api/hassio_ingress/test-token',
+        baseURL: 'http://localhost:5173/api/hassio_ingress/test-token/',
       },
     },
   ],

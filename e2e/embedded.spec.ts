@@ -4,7 +4,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   test.skip(({ isEmbedded }) => !isEmbedded, 'embedded project only')
 
   test('bottom tab bar is visible and sidebar/hamburger are hidden', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     // Bottom tab bar should be visible with all tabs
     const tabBar = page.locator('nav.fixed.bottom-0')
@@ -23,7 +23,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('tab navigation between pages', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
     await expect(page.getByText('This Month')).toBeVisible()
 
     const tabBar = page.locator('nav.fixed.bottom-0')
@@ -45,7 +45,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('Manage tab opens popup with Categories and Learned Items', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
 
@@ -73,7 +73,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('Manage popup closes on outside tap', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
     await tabBar.getByText('Manage').click()
@@ -87,7 +87,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('Manage popup toggles on repeated tap', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
 
@@ -101,7 +101,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('bottom tab bar is hidden during receipt review', async ({ page }) => {
-    await page.goto('/receipts/3')
+    await page.goto('./receipts/3')
 
     // Review page should load
     await expect(page.getByText('Costco')).toBeVisible()
@@ -111,7 +111,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('Scan button opens upload modal', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
     await tabBar.getByText('Scan').click()
@@ -121,7 +121,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('URLs include the ingress prefix in pushState', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
 
@@ -140,7 +140,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('browser back/forward works with ingress prefix', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
 
@@ -164,7 +164,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('active tab highlights correctly', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
 
@@ -183,7 +183,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('Manage tab highlights when on Categories or Learned Items', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     const tabBar = page.locator('nav.fixed.bottom-0')
     const manageBtn = tabBar.locator('button', { hasText: 'Manage' })
@@ -207,7 +207,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('deep link to receipt review works under ingress prefix', async ({ page }) => {
-    await page.goto('/receipts/3')
+    await page.goto('./receipts/3')
 
     // Should show review page for receipt 3
     await expect(page.getByText('Costco')).toBeVisible()
@@ -218,7 +218,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
   })
 
   test('dashboard content loads correctly under ingress', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('./')
 
     // Stat cards
     await expect(page.getByText('This Month')).toBeVisible()
