@@ -1,8 +1,7 @@
-import { test, expect, TRENDS } from './fixtures'
+import { test, expect } from './fixtures'
 
 test.describe('Trends — Mobile', () => {
-  test.skip(({ browserName }, testInfo) => testInfo.project.name !== 'mobile-chrome',
-    'mobile-only tests')
+  test.skip(({ isMobile }) => !isMobile, 'mobile-only tests')
 
   test('chart and month breakdown render on mobile', async ({ page }) => {
     await page.goto('/trends')

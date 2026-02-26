@@ -1,8 +1,7 @@
 import { test, expect } from './fixtures'
 
 test.describe('Navigation & Dashboard — Mobile', () => {
-  test.skip(({ browserName }, testInfo) => testInfo.project.name !== 'mobile-chrome',
-    'mobile-only tests')
+  test.skip(({ isMobile }) => !isMobile, 'mobile-only tests')
 
   test('hamburger menu opens sidebar overlay and navigates between pages', async ({ page }) => {
     await page.goto('/')
