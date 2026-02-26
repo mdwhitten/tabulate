@@ -542,3 +542,140 @@ class TestSaveReceipt:
         async with db.execute("SELECT COUNT(*) FROM item_mappings") as cur:
             count = (await cur.fetchone())[0]
         assert count == 0
+
+
+# ── Blank receipt_date save/approve ───────────────────────────────────────────
+
+class TestSaveReceiptDateValidation:
+    """
+    Regression tests for receipts saved or approved without a date.
+
+    The frontend guards against this (handleSave blocks when receiptDate is
+    empty), but the backend must also reject it — especially on approve —
+    to prevent blank-date receipts from entering the verified state.
+    """
+
+    @pytest.mark.asyncio
+    async def test_approve_rejects_null_date_when_db_date_is_null(self, db, app):
+        """Approving a receipt that has no date (and sends none) should fail."""
+        rid = await insert_receipt(db, receipt_date=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "approve": True, "receipt_date": None,
+            })
+
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_approve_rejects_empty_string_date(self, db, app):
+        """Approving with receipt_date='' should fail — empty string is not a valid date."""
+        rid = await insert_receipt(db, receipt_date=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "approve": True, "receipt_date": "",
+            })
+
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_approve_rejects_when_no_date_in_body_or_db(self, db, app):
+        """Approving without sending receipt_date when DB has none should fail."""
+        rid = await insert_receipt(db, receipt_date=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "approve": True,
+            })
+
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_approve_succeeds_when_db_already_has_date(self, db, app):
+        """Approving without sending a new date is fine if the DB already has one."""
+        rid = await insert_receipt(db, receipt_date="2026-02-20")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "approve": True,
+            })
+
+        assert resp.status_code == 200
+        async with db.execute("SELECT receipt_date FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        assert row["receipt_date"] == "2026-02-20"
+
+    @pytest.mark.asyncio
+    async def test_approve_succeeds_with_valid_date(self, db, app):
+        """Approving with a valid date should work even if DB date was null."""
+        rid = await insert_receipt(db, receipt_date=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "approve": True, "receipt_date": "2026-02-25",
+            })
+
+        assert resp.status_code == 200
+        async with db.execute("SELECT receipt_date FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        assert row["receipt_date"] == "2026-02-25"
+
+    @pytest.mark.asyncio
+    async def test_draft_save_allows_null_date(self, db, app):
+        """Draft saves (approve=False) should still be allowed without a date."""
+        rid = await insert_receipt(db, receipt_date=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "approve": False,
+            })
+
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_empty_string_date_not_stored_in_db(self, db, app):
+        """Sending receipt_date='' on draft save should not store an empty string."""
+        rid = await insert_receipt(db, receipt_date=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "receipt_date": "",
+            })
+
+        assert resp.status_code == 200
+        async with db.execute("SELECT receipt_date FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        # Empty string should be treated as null, not stored as ""
+        assert row["receipt_date"] is None
+
+    @pytest.mark.asyncio
+    async def test_coalesce_preserves_existing_date_on_null_input(self, db, app):
+        """Sending receipt_date=null should keep the existing date, not clear it."""
+        rid = await insert_receipt(db, receipt_date="2026-02-20")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/receipts/{rid}/save", json={
+                "receipt_date": None,
+            })
+
+        assert resp.status_code == 200
+        async with db.execute("SELECT receipt_date FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        assert row["receipt_date"] == "2026-02-20"

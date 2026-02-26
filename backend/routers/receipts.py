@@ -324,9 +324,23 @@ async def save_receipt(
     Apply corrections, optionally override the total.
     If approve=True, mark receipt as verified (locked). Otherwise keep current status (draft save).
     """
-    async with db.execute("SELECT id FROM receipts WHERE id = ?", (receipt_id,)) as cur:
-        if not await cur.fetchone():
+    # Normalize empty-string dates to None so COALESCE works correctly
+    if body.receipt_date is not None and not body.receipt_date.strip():
+        body.receipt_date = None
+
+    async with db.execute("SELECT id, receipt_date FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+        row = await cur.fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail="Receipt not found")
+
+    # On approve, ensure a date exists (either from body or already in DB)
+    if body.approve:
+        effective_date = body.receipt_date or row["receipt_date"]
+        if not effective_date:
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot approve a receipt without a date. Please set a receipt date.",
+            )
 
     # Delete items the user removed
     for item_id in body.deleted_item_ids:
