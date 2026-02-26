@@ -1,10 +1,10 @@
 import { test, expect, RECEIPT_DETAIL } from './fixtures'
 
 /** Mock route that returns a verified receipt for id=1 and captures save requests. */
-function mockVerifiedReceipt(page: import('@playwright/test').Page) {
+async function mockVerifiedReceipt(page: import('@playwright/test').Page) {
   const captured: { body: Record<string, unknown> | null } = { body: null }
 
-  page.route(/\/api\/receipts\/1$/, route => {
+  await page.route(/\/api\/receipts\/1$/, route => {
     if (route.request().method() === 'GET') {
       return route.fulfill({
         json: { ...RECEIPT_DETAIL, id: 1, status: 'verified' },
@@ -13,7 +13,7 @@ function mockVerifiedReceipt(page: import('@playwright/test').Page) {
     return route.continue()
   })
 
-  page.route(/\/api\/receipts\/1\/save/, route => {
+  await page.route(/\/api\/receipts\/1\/save/, route => {
     if (route.request().method() === 'POST') {
       captured.body = JSON.parse(route.request().postData() ?? '{}')
       return route.fulfill({ json: { status: 'ok' } })
@@ -29,9 +29,9 @@ test.describe('Review Receipt — Mobile Edit Flow', () => {
   test.skip(({ isMobile, isEmbedded }) => !isMobile || isEmbedded, 'mobile-chrome only')
 
   test('verified receipt shows pencil icon edit button on mobile', async ({ page }) => {
-    mockVerifiedReceipt(page)
+    await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
-    await expect(page.getByText('Costco')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
     // Desktop "Edit" button with label should be hidden on mobile
     await expect(page.getByRole('button', { name: /^Edit$/i })).toBeHidden()
@@ -43,9 +43,9 @@ test.describe('Review Receipt — Mobile Edit Flow', () => {
   })
 
   test('tapping pencil unlocks store name and date on mobile', async ({ page }) => {
-    mockVerifiedReceipt(page)
+    await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
-    await expect(page.getByText('Costco')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
     // Date should be disabled in locked mode
     const dateInput = page.locator('input[type="date"]')
@@ -64,9 +64,9 @@ test.describe('Review Receipt — Mobile Edit Flow', () => {
   })
 
   test('editing store name on mobile and saving via overflow menu', async ({ page }) => {
-    const captured = mockVerifiedReceipt(page)
+    const captured = await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
-    await expect(page.getByText('Costco')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
     // Enter edit mode
     const pencilButton = page.locator('button:visible >> svg.lucide-pencil').first()
@@ -86,7 +86,11 @@ test.describe('Review Receipt — Mobile Edit Flow', () => {
     // Click Save inside the menu
     const menuSave = page.locator('div[class*="absolute"] >> button:has-text("Save")')
     await expect(menuSave).toBeVisible()
+
+    // Wait for save API call to complete before checking captured body
+    const saveResponse = page.waitForResponse(resp => /\/api\/receipts\/\d+\/save/.test(resp.url()))
     await menuSave.click()
+    await saveResponse
 
     // Verify payload
     expect(captured.body).toBeTruthy()
@@ -95,9 +99,9 @@ test.describe('Review Receipt — Mobile Edit Flow', () => {
   })
 
   test('editing date on mobile and saving via footer Save button', async ({ page }) => {
-    const captured = mockVerifiedReceipt(page)
+    const captured = await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
-    await expect(page.getByText('Costco')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
     // Enter edit mode
     const pencilButton = page.locator('button:visible >> svg.lucide-pencil').first()
@@ -111,7 +115,11 @@ test.describe('Review Receipt — Mobile Edit Flow', () => {
     // (footer is only hidden when isLocked, which is no longer true)
     const saveButton = page.getByRole('button', { name: /^Save$/i })
     await expect(saveButton).toBeEnabled({ timeout: 3000 })
+
+    // Wait for save API call to complete before checking captured body
+    const saveResponse = page.waitForResponse(resp => /\/api\/receipts\/\d+\/save/.test(resp.url()))
     await saveButton.click()
+    await saveResponse
 
     // Verify payload
     expect(captured.body).toBeTruthy()

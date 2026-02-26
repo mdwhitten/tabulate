@@ -1,11 +1,11 @@
 import { test, expect, RECEIPT_DETAIL } from './fixtures'
 
 /** Mock route that returns a verified receipt for id=1 and captures save requests. */
-function mockVerifiedReceipt(page: import('@playwright/test').Page) {
+async function mockVerifiedReceipt(page: import('@playwright/test').Page) {
   const captured: { body: Record<string, unknown> | null } = { body: null }
 
   // Override single-receipt GET to return a verified receipt
-  page.route(/\/api\/receipts\/1$/, route => {
+  await page.route(/\/api\/receipts\/1$/, route => {
     if (route.request().method() === 'GET') {
       return route.fulfill({
         json: { ...RECEIPT_DETAIL, id: 1, status: 'verified' },
@@ -15,7 +15,7 @@ function mockVerifiedReceipt(page: import('@playwright/test').Page) {
   })
 
   // Capture save body
-  page.route(/\/api\/receipts\/1\/save/, route => {
+  await page.route(/\/api\/receipts\/1\/save/, route => {
     if (route.request().method() === 'POST') {
       captured.body = JSON.parse(route.request().postData() ?? '{}')
       return route.fulfill({ json: { status: 'ok' } })
@@ -27,16 +27,21 @@ function mockVerifiedReceipt(page: import('@playwright/test').Page) {
 }
 
 test.describe('Review Receipt Page', () => {
-  test('displays receipt details with all line items', async ({ page }) => {
+  test('displays receipt details with all line items', async ({ page, isMobile }) => {
     await page.goto('/receipts/3')
 
     // Store name is an editable input for pending receipts (locked=false)
     await expect(page.getByPlaceholder('Store name')).toBeVisible()
     await expect(page.getByPlaceholder('Store name')).toHaveValue('Costco')
 
-    // All items should be visible — item names are inputs for pending receipts
+    // All items should be visible
+    // Mobile renders item names as <p> text in cards; desktop renders as <input>
     for (const item of RECEIPT_DETAIL.items) {
-      await expect(page.locator(`input[value="${item.clean_name}"]`)).toBeVisible()
+      if (isMobile) {
+        await expect(page.locator('.sm\\:hidden').getByText(item.clean_name, { exact: true })).toBeVisible()
+      } else {
+        await expect(page.locator(`input[value="${item.clean_name}"]`)).toBeVisible()
+      }
     }
   })
 
@@ -58,7 +63,7 @@ test.describe('Review Receipt Page', () => {
   })
 
   test('verified receipt shows Edit button instead of Save/Approve', async ({ page }) => {
-    mockVerifiedReceipt(page)
+    await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
 
     // Edit button should be visible (locked mode) — first() for topbar + footer
@@ -66,7 +71,7 @@ test.describe('Review Receipt Page', () => {
   })
 
   test('clicking Edit on verified receipt unlocks store name and date', async ({ page }) => {
-    mockVerifiedReceipt(page)
+    await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
 
     // Wait for content to render
@@ -95,7 +100,7 @@ test.describe('Review Receipt Page', () => {
   })
 
   test('editing verified receipt store name enables Save and sends correct payload', async ({ page }) => {
-    const captured = mockVerifiedReceipt(page)
+    const captured = await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
     await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
@@ -111,7 +116,10 @@ test.describe('Review Receipt Page', () => {
     const saveButton = page.getByRole('button', { name: /^Save$/i }).first()
     await expect(saveButton).toBeEnabled({ timeout: 3000 })
 
+    // Wait for save API call to complete before checking captured body
+    const saveResponse = page.waitForResponse(resp => /\/api\/receipts\/\d+\/save/.test(resp.url()))
     await saveButton.click()
+    await saveResponse
 
     // Verify the payload
     expect(captured.body).toBeTruthy()
@@ -120,7 +128,7 @@ test.describe('Review Receipt Page', () => {
   })
 
   test('editing verified receipt date enables Save and sends correct payload', async ({ page }) => {
-    const captured = mockVerifiedReceipt(page)
+    const captured = await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
     await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
@@ -135,7 +143,10 @@ test.describe('Review Receipt Page', () => {
     const saveButton = page.getByRole('button', { name: /^Save$/i }).first()
     await expect(saveButton).toBeEnabled({ timeout: 3000 })
 
+    // Wait for save API call to complete before checking captured body
+    const saveResponse = page.waitForResponse(resp => /\/api\/receipts\/\d+\/save/.test(resp.url()))
     await saveButton.click()
+    await saveResponse
 
     // Verify the payload
     expect(captured.body).toBeTruthy()
@@ -155,8 +166,8 @@ test.describe('Review Receipt Page', () => {
 
     await page.goto('/receipts/3')
 
-    // Wait for the page to finish loading — item names are inputs for pending receipts
-    await expect(page.locator('input[value="Organic Bananas"]')).toBeVisible()
+    // Wait for the page to finish loading (mobile renders items as text, desktop as input)
+    await expect(page.getByText('Subtotal')).toBeVisible()
 
     // Make a change — update the store name to trigger dirty state
     const storeInput = page.getByPlaceholder('Store name')
@@ -167,8 +178,10 @@ test.describe('Review Receipt Page', () => {
     const saveButton = page.getByRole('button', { name: /^Save$/i }).first()
     await expect(saveButton).toBeEnabled({ timeout: 3000 })
 
-    // Click save
+    // Click save and wait for the API call to complete
+    const saveResponse = page.waitForResponse(resp => /\/api\/receipts\/\d+\/save/.test(resp.url()))
     await saveButton.click()
+    await saveResponse
 
     // Should have sent a save request (not an approve)
     expect(savedBody).toBeTruthy()
@@ -186,12 +199,16 @@ test.describe('Review Receipt Page', () => {
     })
 
     await page.goto('/receipts/3')
-    await expect(page.locator('input[value="Organic Bananas"]')).toBeVisible()
+    await expect(page.getByText('Subtotal')).toBeVisible()
 
     // Click Approve — use first() because topbar and footer both show Approve
     const approveButton = page.getByRole('button', { name: /Approve/i }).first()
     await expect(approveButton).toBeVisible({ timeout: 5000 })
+
+    // Click approve and wait for the API call to complete
+    const saveResponse = page.waitForResponse(resp => /\/api\/receipts\/\d+\/save/.test(resp.url()))
     await approveButton.click()
+    await saveResponse
 
     // Should have sent approve=true
     expect(savedBody).toBeTruthy()

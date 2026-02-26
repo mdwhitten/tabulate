@@ -8,7 +8,7 @@ test.describe('Learned Items — Mobile', () => {
 
     // Item names should be visible
     await expect(page.getByText('Organic Bananas')).toBeVisible()
-    await expect(page.getByText('Whole Milk')).toBeVisible()
+    await expect(page.getByText('Whole Milk', { exact: true })).toBeVisible()
 
     // "Last Seen" column header should be hidden on mobile
     const lastSeenHeader = page.locator('th').filter({ hasText: 'Last Seen' })
@@ -100,7 +100,7 @@ test.describe('Learned Items — Mobile', () => {
 
     await page.goto('/learned')
 
-    await page.getByRole('button', { name: /Produce/i }).click()
+    await page.getByRole('button', { name: /Produce/i }).first().click()
     await expect(page.getByText('1 rule')).toBeVisible({ timeout: 2000 })
   })
 })
