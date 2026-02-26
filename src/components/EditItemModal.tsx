@@ -12,8 +12,10 @@ interface EditItemModalProps {
   /** Unsaved local item being edited */
   localItem?: LocalItem | null
   categories: Category[]
-  /** When true, only category is editable (name, price, delete are disabled) */
+  /** When true, item name/price/delete are disabled */
   locked?: boolean
+  /** When true (and locked), category remains editable */
+  allowCategoryEdit?: boolean
   onNameChange?: (id: number, name: string) => void
   onCategoryChange?: (id: number, category: string) => void
   onPriceChange?: (id: number, unitPrice: number) => void
@@ -28,6 +30,7 @@ export function EditItemModal({
   localItem,
   categories,
   locked = false,
+  allowCategoryEdit,
   onNameChange,
   onCategoryChange,
   onPriceChange,
@@ -170,6 +173,7 @@ export function EditItemModal({
               value={category}
               categories={categories}
               onChange={setCategory}
+              disabled={locked && !allowCategoryEdit}
               size="lg"
             />
           </div>
@@ -220,7 +224,7 @@ export function EditItemModal({
             onClick={handleDone}
             className="w-full py-3.5 bg-[#03a9f4] text-white text-base font-semibold rounded-xl hover:bg-[#0290d1] active:bg-[#0277a8] transition-colors"
           >
-            Done
+            {locked && !allowCategoryEdit ? 'Close' : 'Done'}
           </button>
           {!locked && (
             <button

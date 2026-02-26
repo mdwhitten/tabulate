@@ -16,7 +16,7 @@ import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
 import type { Receipt, SaveReceiptBody, DuplicateMatch } from './types'
-import { ArrowLeft, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowLeft, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2, Pencil } from 'lucide-react'
 import './index.css'
 
 // ── Ingress-aware URL helpers ─────────────────────────────────────────────────
@@ -368,6 +368,7 @@ function TopbarReceiptActions({ receiptId, isFreshUpload }: { receiptId: number 
   const [visible, setVisible]   = useState(false)
   const [dirty, setDirty]       = useState(false)
   const [verified, setVerified] = useState(false)
+  const [locked, setLocked]     = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -377,6 +378,7 @@ function TopbarReceiptActions({ receiptId, isFreshUpload }: { receiptId: number 
       setVisible(!!w.__tabulate_isEditable)
       setDirty(!!w.__tabulate_isDirty)
       setVerified(!!w.__tabulate_isVerified)
+      setLocked(!!w.__tabulate_isLocked)
     }
     poll()
     const id = setInterval(poll, 200)
@@ -393,7 +395,30 @@ function TopbarReceiptActions({ receiptId, isFreshUpload }: { receiptId: number 
     return () => document.removeEventListener('mousedown', handleClick)
   }, [menuOpen])
 
-  if (!receiptId || !visible) return null
+  if (!receiptId) return null
+
+  // Locked (verified, not editing): show Edit button only
+  if (locked) {
+    return (
+      <div className="flex items-center gap-2">
+        <button
+          className="hidden sm:flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg border transition-colors text-gray-700 bg-white border-gray-200 hover:bg-gray-50"
+          onClick={() => window.dispatchEvent(new CustomEvent('tabulate:edit-receipt'))}
+        >
+          <Pencil className="w-4 h-4" />
+          Edit
+        </button>
+        <button
+          className="sm:hidden flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+          onClick={() => window.dispatchEvent(new CustomEvent('tabulate:edit-receipt'))}
+        >
+          <Pencil className="w-5 h-5" />
+        </button>
+      </div>
+    )
+  }
+
+  if (!visible) return null
 
   return (
     <div className="flex items-center gap-2">

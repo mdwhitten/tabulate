@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle, Pencil } from 'lucide-react'
 import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
@@ -106,6 +106,8 @@ export function ReviewReceipt({
   onDelete,
 }: ReviewReceiptProps) {
   const isVerified = receipt.status === 'verified'
+  const [isEditing, setIsEditing] = useState(false)
+  const isLocked = isVerified && !isEditing
 
   const [state, dispatch] = useReducer(reviewReducer, {
     items:               receipt.items,
@@ -136,6 +138,7 @@ export function ReviewReceipt({
       prevReceiptRef.current = receipt
       dispatch({ type: 'RESET', receipt })
       setLocalItems([])
+      setIsEditing(false)
       setStoreName(receipt.store_name ?? '')
       setReceiptDate(receipt.receipt_date ?? '')
       setCatFailed(false)  // clear banner on receipt change / refetch
@@ -145,8 +148,14 @@ export function ReviewReceipt({
   // ── Dirty tracking ──────────────────────────────────────────────────────
 
   const isDirty = useMemo(() => {
-    // Verified receipts can still have category corrections
-    if (isVerified) return Object.keys(state.categoryCorrections).length > 0
+    if (isVerified) {
+      // Editing a verified receipt: only categories, date, and store name can change
+      return (
+        Object.keys(state.categoryCorrections).length > 0 ||
+        storeName !== (receipt.store_name ?? '') ||
+        receiptDate !== (receipt.receipt_date ?? '')
+      )
+    }
     return (
       Object.keys(state.categoryCorrections).length > 0 ||
       Object.keys(state.priceCorrections).length > 0 ||
@@ -166,19 +175,27 @@ export function ReviewReceipt({
     return () => window.removeEventListener('beforeunload', handler)
   }, [isDirty])
 
-  // Expose dirty + editable + verified state so App.tsx can guard navigation / show Save
-  // Verified receipts are "editable" when they have pending category changes
+  // Expose dirty + editable + verified + locked state so App.tsx can guard navigation / show Save
   useEffect(() => {
     const w = window as any
     w.__tabulate_isDirty = isDirty
-    w.__tabulate_isEditable = !isVerified || isDirty
+    w.__tabulate_isEditable = !isLocked
     w.__tabulate_isVerified = isVerified
+    w.__tabulate_isLocked = isLocked
     return () => {
       w.__tabulate_isDirty = false
       w.__tabulate_isEditable = false
       w.__tabulate_isVerified = false
+      w.__tabulate_isLocked = false
     }
-  }, [isDirty, isVerified])
+  }, [isDirty, isVerified, isLocked])
+
+  // Listen for edit toggle from topbar
+  useEffect(() => {
+    const onEdit = () => { setIsEditing(true) }
+    window.addEventListener('tabulate:edit-receipt', onEdit)
+    return () => window.removeEventListener('tabulate:edit-receipt', onEdit)
+  }, [])
 
   // Expose save/approve/rescan/delete to topbar via CustomEvents
   const handleSaveRef = useRef<((approve: boolean) => Promise<void>) | null>(null)
@@ -294,7 +311,7 @@ export function ReviewReceipt({
         name_corrections: Object.fromEntries(
           Object.entries(state.nameCorrections).map(([k, v]) => [k, v])
         ),
-        manual_total:    isVerified ? null : (state.manualTotal ?? null),
+        manual_total:    state.manualTotal ?? null,
         receipt_date:    receiptDate || null,
         store_name:      storeName   || null,
         new_items:       localItems.map(({ name, price, category }) => ({ name, price, category })),
@@ -304,7 +321,7 @@ export function ReviewReceipt({
     } finally {
       setSaving(false)
     }
-  }, [onSave, state, isVerified, receiptDate, storeName, localItems])
+  }, [onSave, state, receiptDate, storeName, localItems])
 
   useEffect(() => { handleSaveRef.current = handleSave }, [handleSave])
 
@@ -374,7 +391,7 @@ export function ReviewReceipt({
               </p>
               <div className="flex items-center gap-2">
                 <Store className="w-4 h-4 text-gray-400 shrink-0" />
-                {isVerified ? (
+                {isLocked ? (
                   <h2 className="text-lg font-semibold text-gray-900 leading-tight truncate">
                     {storeName || 'Unknown Store'}
                   </h2>
@@ -400,7 +417,7 @@ export function ReviewReceipt({
           <div className={`flex items-center gap-2 px-3 sm:px-5 py-2 border-b ${dateError && !receiptDate ? 'bg-red-50 border-b-red-200' : 'bg-gray-50 border-b-gray-100'}`}>
             <CalendarDays className={`w-3.5 h-3.5 shrink-0 ${dateError && !receiptDate ? 'text-red-400' : 'text-gray-400'}`} />
             <label className={`text-xs font-mono whitespace-nowrap ${dateError && !receiptDate ? 'text-red-500' : 'text-gray-500'}`}>
-              Receipt date{!isVerified && <span className="text-red-400">*</span>}:
+              Receipt date{!isLocked && <span className="text-red-400">*</span>}:
             </label>
             <div className="relative flex-1 min-w-0">
               <input
@@ -408,10 +425,10 @@ export function ReviewReceipt({
                 type="date"
                 value={receiptDate}
                 onChange={e => { setReceiptDate(e.target.value); if (e.target.value) setDateError(false) }}
-                disabled={isVerified}
+                disabled={isLocked}
                 className={[
                   'text-sm font-mono outline-none w-full',
-                  isVerified
+                  isLocked
                     ? 'bg-transparent border-none cursor-default text-gray-700'
                     : [
                         'bg-white border rounded-lg px-2 py-1.5 cursor-pointer',
@@ -423,7 +440,7 @@ export function ReviewReceipt({
                       ].join(' '),
                 ].join(' ')}
               />
-              {!receiptDate && !isVerified && (
+              {!receiptDate && !isLocked && (
                 <span
                   className={`absolute left-2.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none ${dateError ? 'text-red-400' : 'text-gray-400'}`}
                 >
@@ -443,7 +460,7 @@ export function ReviewReceipt({
               localItems={localItems}
               categories={categories}
               locked={isVerified}
-              allowCategoryEdit={isVerified}
+              allowCategoryEdit={isEditing}
               onCategoryChange={handleCategoryChange}
               onPriceChange={handlePriceChange}
               onNameChange={handleNameChange}
@@ -454,18 +471,18 @@ export function ReviewReceipt({
             />
           </div>
 
-          {/* Footer — hidden on mobile when no actions are visible */}
-          <div className={`flex items-center justify-between gap-2 px-3 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 ${isVerified ? 'hidden sm:flex' : ''}`}>
+          {/* Footer */}
+          <div className={`flex items-center justify-between gap-2 px-3 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 ${isLocked ? 'hidden sm:flex' : ''}`}>
             {/* Secondary actions — desktop only (mobile uses topbar overflow) */}
             <div className="hidden sm:flex gap-2">
-              {isFreshUpload && (
+              {!isVerified && isFreshUpload && (
                 <button onClick={onRescan}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
                   <RotateCcw className="w-3.5 h-3.5" />
                   Rescan
                 </button>
               )}
-              {onDelete && (
+              {!isVerified && onDelete && (
                 <button onClick={onDelete}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-500 bg-white border border-red-100 rounded-lg hover:bg-red-50 transition-colors">
                   <Trash2 className="w-3.5 h-3.5" />
@@ -474,7 +491,23 @@ export function ReviewReceipt({
               )}
             </div>
             {/* Primary actions */}
-            {!isVerified ? (
+            {isLocked ? (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Edit
+              </button>
+            ) : isEditing ? (
+              <div className="flex gap-2 flex-1 sm:flex-none sm:justify-end">
+                <button onClick={() => handleSave(false)} disabled={!isDirty || saving}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                  <Save className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            ) : (
               <div className="flex gap-2 flex-1 sm:flex-none sm:justify-end">
                 <button onClick={() => handleSave(false)} disabled={!isDirty || saving}
                   className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
@@ -487,12 +520,6 @@ export function ReviewReceipt({
                   Approve
                 </button>
               </div>
-            ) : isDirty && (
-              <button onClick={() => handleSave(false)} disabled={saving}
-                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                <Save className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-                {saving ? 'Saving…' : 'Save Categories'}
-              </button>
             )}
           </div>
         </div>
