@@ -49,5 +49,8 @@ jobs:
       - name: Type-check
         run: ./node_modules/.bin/tsc -b --noEmit
 
+      - name: Unit tests
+        run: ./node_modules/.bin/vitest run
+
       - name: Build
         run: ./node_modules/.bin/tsc -b && ./node_modules/.bin/vite build
