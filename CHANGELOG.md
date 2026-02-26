@@ -5,6 +5,15 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-02-26
+
+### Fixed
+- Price corrections could modify line items belonging to a different receipt — query now scoped to `receipt_id`
+- Receipt date field accepted arbitrary strings (e.g. `"not-a-date"`) that broke trend queries — now validated as ISO `YYYY-MM-DD`
+- Empty/whitespace-only store name was stored as `""` instead of being treated as null
+- New items accepted nonexistent or disabled categories — now validated against the categories table
+- Negative manual total accepted and stored — now rejected with 422
+
 ## [1.3.1] - 2026-02-25
 
 ### Added
