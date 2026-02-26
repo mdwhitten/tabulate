@@ -65,8 +65,8 @@ test.describe('Categories Management', () => {
 
     await page.goto('/categories')
 
-    // Find the Edit button for the custom category
-    const customRow = page.locator('div').filter({ hasText: /^.*Organic.*Custom/ }).first()
+    // Find the Edit button for the custom category row (group class is on row-level divs)
+    const customRow = page.locator('div.group').filter({ hasText: 'Organic' })
     await customRow.getByRole('button', { name: /Edit/i }).click()
 
     // Modify name
@@ -79,7 +79,8 @@ test.describe('Categories Management', () => {
   })
 
   test('disable and re-enable a built-in category', async ({ page }) => {
-    let categoriesState = [...CATEGORIES]
+    // Deep copy to avoid mutating shared CATEGORIES objects
+    let categoriesState = CATEGORIES.map(c => ({ ...c }))
 
     await page.route('**/api/categories', route =>
       route.fulfill({ json: categoriesState }),
@@ -100,8 +101,8 @@ test.describe('Categories Management', () => {
 
     await page.goto('/categories')
 
-    // Disable the "Bakery" category
-    const bakeryRow = page.locator('div').filter({ hasText: /^.*Bakery.*Built-in/ }).first()
+    // Disable the "Bakery" category (group class targets row-level divs only)
+    const bakeryRow = page.locator('div.group').filter({ hasText: 'Bakery' })
     await bakeryRow.getByRole('button', { name: /Disable/i }).click()
 
     // After disable, the "Disabled" section should appear

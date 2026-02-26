@@ -46,10 +46,10 @@ test.describe('All Receipts — Mobile', () => {
     await page.goto('/receipts')
 
     await page.getByRole('button', { name: /^Approved$/i }).click()
-    await expect(page.getByText('3 receipts')).toBeVisible()
+    await expect(page.getByText('4 receipts')).toBeVisible()
 
     await page.getByRole('button', { name: /^Pending$/i }).click()
-    await expect(page.getByText('3 receipts')).toBeVisible()
+    await expect(page.getByText('2 receipts')).toBeVisible()
 
     await page.getByRole('button', { name: /^All$/i }).click()
     await expect(page.getByText(`${RECEIPTS.length} receipts`)).toBeVisible()

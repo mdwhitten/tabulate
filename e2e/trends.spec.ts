@@ -14,8 +14,9 @@ test.describe('Trends Page', () => {
 
     // Breakdown section for the latest month (Feb 2026 — selected by default)
     await expect(page.getByText('Breakdown')).toBeVisible()
-    await expect(page.getByText('Feb 2026')).toBeVisible()
-    await expect(page.getByText('$386.44')).toBeVisible()
+    // Month label and total appear in both chart header and breakdown — use first()
+    await expect(page.getByText('Feb 2026').first()).toBeVisible()
+    await expect(page.getByText('$386.44').first()).toBeVisible()
   })
 
   test('category breakdown rows show all categories with spending', async ({ page }) => {
@@ -32,18 +33,18 @@ test.describe('Trends Page', () => {
     await page.goto('/trends')
 
     // Default is the last month (Feb 2026)
-    await expect(page.getByText('Feb 2026')).toBeVisible()
+    await expect(page.getByText('Feb 2026').first()).toBeVisible()
 
     // Click previous month
     await page.getByRole('button', { name: 'Previous month' }).click()
 
     // Should now show Jan 2026
-    await expect(page.getByText('Jan 2026')).toBeVisible()
-    await expect(page.getByText('$350.20')).toBeVisible()
+    await expect(page.getByText('Jan 2026').first()).toBeVisible()
+    await expect(page.getByText('$350.20').first()).toBeVisible()
 
     // Click next month to go back to Feb
     await page.getByRole('button', { name: 'Next month' }).click()
-    await expect(page.getByText('Feb 2026')).toBeVisible()
+    await expect(page.getByText('Feb 2026').first()).toBeVisible()
   })
 
   test('next button disabled on latest month, prev disabled on oldest', async ({ page }) => {

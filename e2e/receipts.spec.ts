@@ -44,8 +44,8 @@ test.describe('All Receipts Page', () => {
     // Click "Approved" chip
     await page.getByRole('button', { name: /^Approved$/i }).click()
 
-    // Should show only verified receipts (3)
-    await expect(page.getByText('3 receipts')).toBeVisible()
+    // Should show only verified receipts (4: ids 1, 2, 5, 6)
+    await expect(page.getByText('4 receipts')).toBeVisible()
     await expect(page.getByText('Costco')).not.toBeVisible()   // pending
     await expect(page.getByText('Safeway')).not.toBeVisible()  // review
     await expect(page.getByText('Whole Foods').first()).toBeVisible()
@@ -53,8 +53,8 @@ test.describe('All Receipts Page', () => {
     // Click "Pending" chip
     await page.getByRole('button', { name: /^Pending$/i }).click()
 
-    // Should show non-verified receipts (3)
-    await expect(page.getByText('3 receipts')).toBeVisible()
+    // Should show non-verified receipts (2: ids 3, 4)
+    await expect(page.getByText('2 receipts')).toBeVisible()
     await expect(page.getByText('Costco')).toBeVisible()
     await expect(page.getByText('Safeway')).toBeVisible()
 

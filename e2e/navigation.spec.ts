@@ -7,14 +7,14 @@ test.describe('Navigation & Dashboard', () => {
     // Stat cards
     await expect(page.getByText('This Month')).toBeVisible()
     await expect(page.getByText('$386.44')).toBeVisible()
-    await expect(page.getByText('Receipts')).toBeVisible()
-    await expect(page.getByText(String(DASHBOARD_SUMMARY.receipt_count))).toBeVisible()
+    await expect(page.getByText('Receipts', { exact: true })).toBeVisible()
+    await expect(page.getByText(String(DASHBOARD_SUMMARY.receipt_count), { exact: true })).toBeVisible()
     await expect(page.getByText('Top Category')).toBeVisible()
     await expect(page.getByText('Avg Trip')).toBeVisible()
 
     // Recent receipts section
     await expect(page.getByText('Recent Receipts')).toBeVisible()
-    await expect(page.getByText('Whole Foods')).toBeVisible()
+    await expect(page.getByText('Whole Foods').first()).toBeVisible()
     await expect(page.getByText('Costco')).toBeVisible()
   })
 
@@ -64,9 +64,8 @@ test.describe('Navigation & Dashboard', () => {
 
   test('dashboard receipt row click opens review', async ({ page }) => {
     await page.goto('/')
-    // Click the first receipt row button in the recent receipts section
-    const recentSection = page.locator('div', { hasText: 'Recent Receipts' }).last()
-    await recentSection.getByRole('button', { name: /Whole Foods/i }).click()
+    // Click the first Whole Foods receipt button on the dashboard
+    await page.getByRole('button', { name: /Whole Foods/i }).first().click()
     await expect(page).toHaveURL(/\/receipts\/1$/)
   })
 

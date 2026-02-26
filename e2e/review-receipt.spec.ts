@@ -42,8 +42,8 @@ test.describe('Review Receipt Page', () => {
   test('"All Receipts" back button navigates to receipts page', async ({ page }) => {
     await page.goto('/receipts/3')
 
-    // Click the back button
-    await page.getByRole('button', { name: /All Receipts/i }).click()
+    // Click the back button (identified by the ArrowLeft icon to avoid sidebar match)
+    await page.locator('button:has(svg.lucide-arrow-left)').click()
     await expect(page).toHaveURL(/\/receipts$/)
   })
 
@@ -52,15 +52,16 @@ test.describe('Review Receipt Page', () => {
 
     // Wait for the review page to render and expose its state
     // The Approve button should be visible for a pending receipt
-    await expect(page.getByRole('button', { name: /Approve/i })).toBeVisible({ timeout: 5000 })
+    // Use first() because topbar and footer both show Approve on desktop
+    await expect(page.getByRole('button', { name: /Approve/i }).first()).toBeVisible({ timeout: 5000 })
   })
 
   test('verified receipt shows Edit button instead of Save/Approve', async ({ page }) => {
     mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
 
-    // Edit button should be visible (locked mode)
-    await expect(page.getByRole('button', { name: /Edit/i })).toBeVisible({ timeout: 5000 })
+    // Edit button should be visible (locked mode) — first() for topbar + footer
+    await expect(page.getByRole('button', { name: /Edit/i }).first()).toBeVisible({ timeout: 5000 })
   })
 
   test('clicking Edit on verified receipt unlocks store name and date', async ({ page }) => {
@@ -76,8 +77,8 @@ test.describe('Review Receipt Page', () => {
     const dateInput = page.locator('input[type="date"]')
     await expect(dateInput).toBeDisabled()
 
-    // Click Edit (footer button on desktop)
-    await page.getByRole('button', { name: /Edit/i }).click()
+    // Click Edit — use first() since topbar and footer both show Edit on desktop
+    await page.getByRole('button', { name: /Edit/i }).first().click()
 
     // Store name should now be an editable input
     await expect(page.getByPlaceholder('Store name')).toBeVisible()
@@ -87,7 +88,7 @@ test.describe('Review Receipt Page', () => {
     await expect(dateInput).toBeEnabled()
 
     // Save button should appear (disabled until changes are made)
-    await expect(page.getByRole('button', { name: /^Save$/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Save$/i }).first()).toBeVisible()
     // Approve button should NOT appear (this is an edit, not a new review)
     await expect(page.getByRole('button', { name: /Approve/i })).not.toBeVisible()
   })
@@ -97,16 +98,16 @@ test.describe('Review Receipt Page', () => {
     await page.goto('/receipts/1')
     await expect(page.getByText('Costco')).toBeVisible()
 
-    // Enter edit mode
-    await page.getByRole('button', { name: /Edit/i }).click()
+    // Enter edit mode — use first() since topbar and footer both show Edit
+    await page.getByRole('button', { name: /Edit/i }).first().click()
 
     // Change store name
     const storeInput = page.getByPlaceholder('Store name')
     await storeInput.clear()
     await storeInput.fill('Costco Wholesale')
 
-    // Save should become enabled
-    const saveButton = page.getByRole('button', { name: /^Save$/i })
+    // Save should become enabled — use first() for topbar + footer
+    const saveButton = page.getByRole('button', { name: /^Save$/i }).first()
     await expect(saveButton).toBeEnabled({ timeout: 3000 })
 
     await saveButton.click()
@@ -122,15 +123,15 @@ test.describe('Review Receipt Page', () => {
     await page.goto('/receipts/1')
     await expect(page.getByText('Costco')).toBeVisible()
 
-    // Enter edit mode
-    await page.getByRole('button', { name: /Edit/i }).click()
+    // Enter edit mode — use first() since topbar and footer both show Edit
+    await page.getByRole('button', { name: /Edit/i }).first().click()
 
     // Change date
     const dateInput = page.locator('input[type="date"]')
     await dateInput.fill('2026-03-01')
 
-    // Save should become enabled
-    const saveButton = page.getByRole('button', { name: /^Save$/i })
+    // Save should become enabled — use first() for topbar + footer
+    const saveButton = page.getByRole('button', { name: /^Save$/i }).first()
     await expect(saveButton).toBeEnabled({ timeout: 3000 })
 
     await saveButton.click()
@@ -161,8 +162,8 @@ test.describe('Review Receipt Page', () => {
     await storeInput.clear()
     await storeInput.fill('Costco Wholesale')
 
-    // Wait for Save button to become enabled
-    const saveButton = page.getByRole('button', { name: /^Save$/i })
+    // Wait for Save button to become enabled — use first() for topbar + footer
+    const saveButton = page.getByRole('button', { name: /^Save$/i }).first()
     await expect(saveButton).toBeEnabled({ timeout: 3000 })
 
     // Click save
@@ -186,8 +187,8 @@ test.describe('Review Receipt Page', () => {
     await page.goto('/receipts/3')
     await expect(page.getByText('Organic Bananas')).toBeVisible()
 
-    // Click Approve
-    const approveButton = page.getByRole('button', { name: /Approve/i })
+    // Click Approve — use first() because topbar and footer both show Approve
+    const approveButton = page.getByRole('button', { name: /Approve/i }).first()
     await expect(approveButton).toBeVisible({ timeout: 5000 })
     await approveButton.click()
 
