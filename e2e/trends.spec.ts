@@ -61,7 +61,8 @@ test.describe('Trends Page', () => {
     await expect(page.getByRole('button', { name: 'Previous month' })).toBeDisabled()
   })
 
-  test('clicking a category row expands to show items (desktop)', async ({ page }) => {
+  test('clicking a category row expands to show items (desktop)', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile-chrome', 'mobile uses bottom sheet — see trends-mobile.spec.ts')
     await page.goto('/trends')
 
     // Click the "Produce" row to expand it

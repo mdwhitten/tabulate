@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Categorization failure detection with retry banner on receipt review
 - GitHub Actions workflow for Playwright E2E tests with artifact upload
 - E2E test coverage for editing approved receipts (click Edit, change fields, save) on desktop and mobile
+- Mobile E2E test suites for navigation (hamburger menu), All Receipts (hidden columns, compact badges), Trends (bottom sheet category drill-down), and Learned Items (swipe-to-delete)
 - Playwright `mobile-chrome` (Pixel 5) project for mobile viewport E2E testing
+- Desktop-only skip guards on sidebar navigation and inline expansion tests that fail at mobile viewport
 
 ### Changed
 - Verified receipts are now fully read-only by default (categories included); editing requires explicitly tapping Edit

@@ -18,7 +18,8 @@ test.describe('Navigation & Dashboard', () => {
     await expect(page.getByText('Costco')).toBeVisible()
   })
 
-  test('sidebar navigation between all pages', async ({ page }) => {
+  test('sidebar navigation between all pages', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile-chrome', 'sidebar hidden on mobile — see navigation-mobile.spec.ts')
     await page.goto('/')
 
     // Navigate to All Receipts
@@ -69,7 +70,8 @@ test.describe('Navigation & Dashboard', () => {
     await expect(page).toHaveURL(/\/receipts\/1$/)
   })
 
-  test('browser back/forward works between pages', async ({ page }) => {
+  test('browser back/forward works between pages', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile-chrome', 'sidebar hidden on mobile — see navigation-mobile.spec.ts')
     await page.goto('/')
     await page.locator('aside button', { hasText: 'All Receipts' }).click()
     await expect(page).toHaveURL(/\/receipts$/)
