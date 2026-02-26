@@ -6,7 +6,7 @@ test.describe('Learned Items Page', () => {
 
     // All mapped items should be visible
     for (const item of MAPPINGS.items) {
-      await expect(page.getByText(item.display_name)).toBeVisible()
+      await expect(page.getByText(item.display_name, { exact: true })).toBeVisible()
     }
 
     // Total rule count

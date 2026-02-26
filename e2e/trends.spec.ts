@@ -71,13 +71,14 @@ test.describe('Trends Page', () => {
     await produceRow.click()
 
     // Should show the category items (from our mock)
-    await expect(page.getByText('Organic Bananas')).toBeVisible()
-    await expect(page.getByText('Organic Strawberries')).toBeVisible()
-    await expect(page.getByText('Avocados')).toBeVisible()
+    // Use first() because mobile bottom sheet also renders these items (hidden via sm:hidden CSS)
+    await expect(page.getByText('Organic Bananas').first()).toBeVisible()
+    await expect(page.getByText('Organic Strawberries').first()).toBeVisible()
+    await expect(page.getByText('Avocados').first()).toBeVisible()
 
     // Click again to collapse
     await produceRow.click()
-    await expect(page.getByText('Organic Bananas')).not.toBeVisible()
+    await expect(page.getByText('Organic Bananas').first()).not.toBeVisible()
   })
 
   test('empty state shown when no trend data', async ({ page }) => {

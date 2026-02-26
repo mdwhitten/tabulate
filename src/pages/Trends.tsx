@@ -484,12 +484,16 @@ export function Trends() {
   const { data, isLoading, isError } = useMonthlyTrends(6)
   const { data: cats } = useCategoryList()
 
-  const lastIdx = (data?.months.length ?? 1) - 1
-  const [selectedIdx, setSelectedIdx] = useState(lastIdx)
+  const [selectedIdx, setSelectedIdx] = useState(0)
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
 
-  // Reset to latest when data loads
   const months     = data?.months ?? []
+
+  // Sync selectedIdx to the latest month when data first loads
+  const monthCount = months.length
+  useEffect(() => {
+    if (monthCount > 0) setSelectedIdx(monthCount - 1)
+  }, [monthCount])
   const categories = data?.categories ?? []
   const safeIdx    = Math.min(selectedIdx, Math.max(0, months.length - 1))
 

@@ -36,7 +36,7 @@ test.describe('Review Receipt Page', () => {
 
     // All items should be visible — item names are inputs for pending receipts
     for (const item of RECEIPT_DETAIL.items) {
-      await expect(page.getByDisplayValue(item.clean_name)).toBeVisible()
+      await expect(page.locator(`input[value="${item.clean_name}"]`)).toBeVisible()
     }
   })
 
@@ -70,7 +70,7 @@ test.describe('Review Receipt Page', () => {
     await page.goto('/receipts/1')
 
     // Wait for content to render
-    await expect(page.getByText('Costco')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
     // Store name should be plain text (not an input) in locked mode
     await expect(page.getByPlaceholder('Store name')).not.toBeVisible()
@@ -97,7 +97,7 @@ test.describe('Review Receipt Page', () => {
   test('editing verified receipt store name enables Save and sends correct payload', async ({ page }) => {
     const captured = mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
-    await expect(page.getByText('Costco')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
     // Enter edit mode — use first() since topbar and footer both show Edit
     await page.getByRole('button', { name: /Edit/i }).first().click()
@@ -122,7 +122,7 @@ test.describe('Review Receipt Page', () => {
   test('editing verified receipt date enables Save and sends correct payload', async ({ page }) => {
     const captured = mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
-    await expect(page.getByText('Costco')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
 
     // Enter edit mode — use first() since topbar and footer both show Edit
     await page.getByRole('button', { name: /Edit/i }).first().click()
@@ -156,7 +156,7 @@ test.describe('Review Receipt Page', () => {
     await page.goto('/receipts/3')
 
     // Wait for the page to finish loading — item names are inputs for pending receipts
-    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
+    await expect(page.locator('input[value="Organic Bananas"]')).toBeVisible()
 
     // Make a change — update the store name to trigger dirty state
     const storeInput = page.getByPlaceholder('Store name')
@@ -186,7 +186,7 @@ test.describe('Review Receipt Page', () => {
     })
 
     await page.goto('/receipts/3')
-    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
+    await expect(page.locator('input[value="Organic Bananas"]')).toBeVisible()
 
     // Click Approve — use first() because topbar and footer both show Approve
     const approveButton = page.getByRole('button', { name: /Approve/i }).first()

@@ -7,7 +7,8 @@ test.describe('Navigation & Dashboard', () => {
     // Stat cards
     await expect(page.getByText('This Month')).toBeVisible()
     await expect(page.getByText('$386.44')).toBeVisible()
-    await expect(page.getByText('Receipts', { exact: true })).toBeVisible()
+    // Sidebar also has a "Receipts" section header — scope to the stat card grid
+    await expect(page.locator('.grid').getByText('Receipts', { exact: true })).toBeVisible()
     await expect(page.getByText(String(DASHBOARD_SUMMARY.receipt_count), { exact: true })).toBeVisible()
     await expect(page.getByText('Top Category')).toBeVisible()
     await expect(page.getByText('Avg Trip')).toBeVisible()
@@ -52,7 +53,7 @@ test.describe('Navigation & Dashboard', () => {
     await page.goto('/receipts/3')
     // Pending receipt: store name and item names are editable inputs (locked=false)
     await expect(page.getByPlaceholder('Store name')).toHaveValue('Costco')
-    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
+    await expect(page.locator('input[value="Organic Bananas"]')).toBeVisible()
   })
 
   test('dashboard "View all" links navigate correctly', async ({ page }) => {

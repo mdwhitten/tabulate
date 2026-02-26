@@ -71,7 +71,7 @@ test.describe('All Receipts Page', () => {
     await expect(page).toHaveURL(/\/receipts\/3$/)
 
     // Review page should load — item names are inputs for pending receipts
-    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
+    await expect(page.locator('input[value="Organic Bananas"]')).toBeVisible()
   })
 
   test('empty search shows "No receipts found" message', async ({ page }) => {
