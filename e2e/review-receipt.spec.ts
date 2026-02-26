@@ -62,7 +62,8 @@ test.describe('Review Receipt Page', () => {
     await expect(page.getByRole('button', { name: /Approve/i }).first()).toBeVisible({ timeout: 5000 })
   })
 
-  test('verified receipt shows Edit button instead of Save/Approve', async ({ page }) => {
+  test('verified receipt shows Edit button instead of Save/Approve', async ({ page, isMobile }) => {
+    test.skip(!!isMobile, 'mobile uses pencil icon, not Edit button — see review-receipt-mobile.spec.ts')
     await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
 
@@ -70,7 +71,8 @@ test.describe('Review Receipt Page', () => {
     await expect(page.getByRole('button', { name: /Edit/i }).first()).toBeVisible({ timeout: 5000 })
   })
 
-  test('clicking Edit on verified receipt unlocks store name and date', async ({ page }) => {
+  test('clicking Edit on verified receipt unlocks store name and date', async ({ page, isMobile }) => {
+    test.skip(!!isMobile, 'mobile uses pencil icon, not Edit button — see review-receipt-mobile.spec.ts')
     await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
 
@@ -99,7 +101,8 @@ test.describe('Review Receipt Page', () => {
     await expect(page.getByRole('button', { name: /Approve/i })).not.toBeVisible()
   })
 
-  test('editing verified receipt store name enables Save and sends correct payload', async ({ page }) => {
+  test('editing verified receipt store name enables Save and sends correct payload', async ({ page, isMobile }) => {
+    test.skip(!!isMobile, 'mobile uses pencil icon, not Edit button — see review-receipt-mobile.spec.ts')
     const captured = await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
     await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
@@ -127,7 +130,8 @@ test.describe('Review Receipt Page', () => {
     expect(captured.body!.approve).toBe(false)
   })
 
-  test('editing verified receipt date enables Save and sends correct payload', async ({ page }) => {
+  test('editing verified receipt date enables Save and sends correct payload', async ({ page, isMobile }) => {
+    test.skip(!!isMobile, 'mobile uses pencil icon, not Edit button — see review-receipt-mobile.spec.ts')
     const captured = await mockVerifiedReceipt(page)
     await page.goto('/receipts/1')
     await expect(page.getByRole('heading', { name: 'Costco' })).toBeVisible()
@@ -167,7 +171,7 @@ test.describe('Review Receipt Page', () => {
     await page.goto('/receipts/3')
 
     // Wait for the page to finish loading (mobile renders items as text, desktop as input)
-    await expect(page.getByText('Subtotal')).toBeVisible()
+    await expect(page.getByText('Subtotal').first()).toBeVisible()
 
     // Make a change — update the store name to trigger dirty state
     const storeInput = page.getByPlaceholder('Store name')
@@ -199,7 +203,7 @@ test.describe('Review Receipt Page', () => {
     })
 
     await page.goto('/receipts/3')
-    await expect(page.getByText('Subtotal')).toBeVisible()
+    await expect(page.getByText('Subtotal').first()).toBeVisible()
 
     // Click Approve — use first() because topbar and footer both show Approve
     const approveButton = page.getByRole('button', { name: /Approve/i }).first()

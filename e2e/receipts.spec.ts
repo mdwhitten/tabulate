@@ -71,7 +71,7 @@ test.describe('All Receipts Page', () => {
     await expect(page).toHaveURL(/\/receipts\/3$/)
 
     // Review page should load (mobile renders items as <p> text, desktop as <input>)
-    await expect(page.getByText('Subtotal')).toBeVisible()
+    await expect(page.getByText('Subtotal').first()).toBeVisible()
   })
 
   test('empty search shows "No receipts found" message', async ({ page }) => {

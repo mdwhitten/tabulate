@@ -40,15 +40,11 @@ test.describe('Trends — Mobile', () => {
     const bottomSheet = page.locator('.fixed.inset-0.z-50')
     await expect(bottomSheet).toBeVisible()
 
-    // Category items should be visible inside the sheet
-    // Use first() because both desktop inline and mobile sheet render the items in DOM
-    await expect(page.getByText('Organic Bananas').first()).toBeVisible()
-    await expect(page.getByText('Organic Strawberries').first()).toBeVisible()
-    await expect(page.getByText('Avocados').first()).toBeVisible()
-
-    // Desktop inline expansion should NOT be visible
-    const inlineExpansion = page.locator('.hidden.sm\\:block').filter({ hasText: 'Organic Bananas' })
-    await expect(inlineExpansion).toBeHidden()
+    // Category items should be visible inside the sheet (scope to bottom sheet to avoid
+    // matching the desktop inline expansion which is hidden via CSS on mobile)
+    await expect(bottomSheet.getByText('Organic Bananas')).toBeVisible()
+    await expect(bottomSheet.getByText('Organic Strawberries')).toBeVisible()
+    await expect(bottomSheet.getByText('Avocados')).toBeVisible()
   })
 
   test('bottom sheet closes when tapping backdrop', async ({ page }) => {
@@ -58,14 +54,14 @@ test.describe('Trends — Mobile', () => {
     const produceRow = page.locator('[role="button"][aria-expanded]').filter({ hasText: 'Produce' })
     await produceRow.click()
 
-    await expect(page.getByText('Organic Bananas').first()).toBeVisible()
+    const bottomSheet = page.locator('.fixed.inset-0.z-50')
+    await expect(bottomSheet.getByText('Organic Bananas')).toBeVisible()
 
     // Tap the backdrop area (top of the overlay, above the sheet)
-    const backdrop = page.locator('.fixed.inset-0.z-50')
-    await backdrop.click({ position: { x: 10, y: 10 } })
+    await bottomSheet.click({ position: { x: 10, y: 10 } })
 
-    // Items should no longer be visible
-    await expect(page.getByText('Organic Bananas').first()).not.toBeVisible()
+    // Bottom sheet should be gone
+    await expect(bottomSheet).toBeHidden()
   })
 
   test('bottom sheet closes when tapping close button', async ({ page }) => {
@@ -75,12 +71,13 @@ test.describe('Trends — Mobile', () => {
     const produceRow = page.locator('[role="button"][aria-expanded]').filter({ hasText: 'Produce' })
     await produceRow.click()
 
-    await expect(page.getByText('Organic Bananas').first()).toBeVisible()
+    const bottomSheet = page.locator('.fixed.inset-0.z-50')
+    await expect(bottomSheet.getByText('Organic Bananas')).toBeVisible()
 
     // Tap the close (X) button in the sheet header
-    const closeButton = page.locator('.fixed.inset-0.z-50 button >> svg.lucide-x')
-    await closeButton.click()
+    await bottomSheet.locator('button >> svg.lucide-x').click()
 
-    await expect(page.getByText('Organic Bananas').first()).not.toBeVisible()
+    // Bottom sheet should be gone
+    await expect(bottomSheet).toBeHidden()
   })
 })

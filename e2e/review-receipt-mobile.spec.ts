@@ -79,7 +79,7 @@ test.describe('Review Receipt — Mobile Edit Flow', () => {
 
     // On mobile, the Save button is inside the overflow menu (•••)
     // Open the overflow menu
-    const overflowButton = page.locator('button:visible >> svg.lucide-more-vertical')
+    const overflowButton = page.locator('button:visible >> svg.lucide-ellipsis-vertical')
     await expect(overflowButton).toBeVisible({ timeout: 3000 })
     await overflowButton.click()
 
