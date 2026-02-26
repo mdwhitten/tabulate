@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures'
 
 test.describe('Trends — Mobile', () => {
-  test.skip(({ isMobile }) => !isMobile, 'mobile-only tests')
+  test.skip(({ isMobile, isEmbedded }) => !isMobile || isEmbedded, 'mobile-chrome only')
 
   test('chart and month breakdown render on mobile', async ({ page }) => {
     await page.goto('/trends')

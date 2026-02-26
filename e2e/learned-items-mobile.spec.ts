@@ -1,7 +1,7 @@
 import { test, expect, MAPPINGS } from './fixtures'
 
 test.describe('Learned Items — Mobile', () => {
-  test.skip(({ isMobile }) => !isMobile, 'mobile-only tests')
+  test.skip(({ isMobile, isEmbedded }) => !isMobile || isEmbedded, 'mobile-chrome only')
 
   test('last seen and times seen columns are hidden on mobile', async ({ page }) => {
     await page.goto('/learned')

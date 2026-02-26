@@ -1,7 +1,7 @@
 import { test, expect, RECEIPTS } from './fixtures'
 
 test.describe('All Receipts — Mobile', () => {
-  test.skip(({ isMobile }) => !isMobile, 'mobile-only tests')
+  test.skip(({ isMobile, isEmbedded }) => !isMobile || isEmbedded, 'mobile-chrome only')
 
   test('date and items columns are hidden on mobile', async ({ page }) => {
     await page.goto('/receipts')

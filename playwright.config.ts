@@ -20,6 +20,13 @@ export default defineConfig({
       name: 'mobile-chrome',
       use: { ...devices['Pixel 5'] },
     },
+    {
+      name: 'embedded',
+      use: {
+        ...devices['Pixel 5'],
+        baseURL: 'http://localhost:5173/api/hassio_ingress/test-token',
+      },
+    },
   ],
   webServer: {
     command: 'npm run dev',

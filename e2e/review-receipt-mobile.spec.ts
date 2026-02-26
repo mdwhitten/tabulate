@@ -26,7 +26,7 @@ function mockVerifiedReceipt(page: import('@playwright/test').Page) {
 
 test.describe('Review Receipt — Mobile Edit Flow', () => {
   // Only run in mobile-chrome project
-  test.skip(({ isMobile }) => !isMobile, 'mobile-only tests')
+  test.skip(({ isMobile, isEmbedded }) => !isMobile || isEmbedded, 'mobile-chrome only')
 
   test('verified receipt shows pencil icon edit button on mobile', async ({ page }) => {
     mockVerifiedReceipt(page)

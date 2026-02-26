@@ -178,11 +178,14 @@ export async function mockAllApis(page: Page) {
 
 // ── Custom test fixture ─────────────────────────────────────────────────────
 
-export const test = base.extend<{ mockApis: void }>({
+export const test = base.extend<{ mockApis: void; isEmbedded: boolean }>({
   mockApis: [async ({ page }, use) => {
     await mockAllApis(page)
     await use()
   }, { auto: true }],
+  isEmbedded: [async ({ baseURL }, use) => {
+    await use(!!baseURL && baseURL.includes('/api/hassio_ingress/'))
+  }, { option: true }],
 })
 
 export { expect } from '@playwright/test'
