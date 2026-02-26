@@ -50,8 +50,9 @@ test.describe('Navigation & Dashboard', () => {
 
   test('deep link to receipt review page', async ({ page }) => {
     await page.goto('/receipts/3')
-    await expect(page.getByText('Costco')).toBeVisible()
-    await expect(page.getByText('Organic Bananas')).toBeVisible()
+    // Pending receipt: store name and item names are editable inputs (locked=false)
+    await expect(page.getByPlaceholder('Store name')).toHaveValue('Costco')
+    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
   })
 
   test('dashboard "View all" links navigate correctly', async ({ page }) => {

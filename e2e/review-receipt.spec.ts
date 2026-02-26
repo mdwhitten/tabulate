@@ -30,12 +30,13 @@ test.describe('Review Receipt Page', () => {
   test('displays receipt details with all line items', async ({ page }) => {
     await page.goto('/receipts/3')
 
-    // Store name and date
-    await expect(page.getByText('Costco')).toBeVisible()
+    // Store name is an editable input for pending receipts (locked=false)
+    await expect(page.getByPlaceholder('Store name')).toBeVisible()
+    await expect(page.getByPlaceholder('Store name')).toHaveValue('Costco')
 
-    // All items should be visible
+    // All items should be visible — item names are inputs for pending receipts
     for (const item of RECEIPT_DETAIL.items) {
-      await expect(page.getByText(item.clean_name)).toBeVisible()
+      await expect(page.getByDisplayValue(item.clean_name)).toBeVisible()
     }
   })
 
@@ -154,8 +155,8 @@ test.describe('Review Receipt Page', () => {
 
     await page.goto('/receipts/3')
 
-    // Wait for the page to finish loading
-    await expect(page.getByText('Organic Bananas')).toBeVisible()
+    // Wait for the page to finish loading — item names are inputs for pending receipts
+    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
 
     // Make a change — update the store name to trigger dirty state
     const storeInput = page.getByPlaceholder('Store name')
@@ -185,7 +186,7 @@ test.describe('Review Receipt Page', () => {
     })
 
     await page.goto('/receipts/3')
-    await expect(page.getByText('Organic Bananas')).toBeVisible()
+    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
 
     // Click Approve — use first() because topbar and footer both show Approve
     const approveButton = page.getByRole('button', { name: /Approve/i }).first()

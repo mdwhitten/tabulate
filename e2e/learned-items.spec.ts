@@ -55,8 +55,9 @@ test.describe('Learned Items Page', () => {
 
     await page.goto('/learned')
 
-    // Click the "Produce" filter chip
-    await page.getByRole('button', { name: /Produce/i }).click()
+    // Click the "Produce" filter chip — use first() because CategorySelect
+    // buttons in the table also contain the same category text
+    await page.getByRole('button', { name: /Produce/i }).first().click()
 
     // Should show only Produce items
     await expect(page.getByText('1 rule')).toBeVisible({ timeout: 2000 })
@@ -81,8 +82,9 @@ test.describe('Learned Items Page', () => {
     const firstCategoryBtn = page.locator('table button').filter({ hasText: 'Produce' }).first()
     await firstCategoryBtn.click()
 
-    // Pick "Snacks" from the portal dropdown
-    await page.getByRole('button', { name: /Snacks/i }).click()
+    // Pick "Snacks" from the portal dropdown (rendered at z-index 9999)
+    // Use the portal container to avoid matching the filter chip button
+    await page.locator('[style*="z-index: 9999"] button').filter({ hasText: 'Snacks' }).click()
 
     // The PATCH call should have been made
     expect(patchCalled).toBe(true)

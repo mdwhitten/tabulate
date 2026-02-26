@@ -70,8 +70,8 @@ test.describe('All Receipts Page', () => {
     await page.getByText('Costco').click()
     await expect(page).toHaveURL(/\/receipts\/3$/)
 
-    // Review page should load
-    await expect(page.getByText('Organic Bananas')).toBeVisible()
+    // Review page should load — item names are inputs for pending receipts
+    await expect(page.getByDisplayValue('Organic Bananas')).toBeVisible()
   })
 
   test('empty search shows "No receipts found" message', async ({ page }) => {
