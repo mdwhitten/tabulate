@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.1] - 2026-02-25
 
+### Added
+- Edit button on verified receipts — unlocks date, store name, and categories for correction while keeping items, prices, and totals locked
+- Categorization failure detection with retry banner on receipt review
+
+### Changed
+- Verified receipts are now fully read-only by default (categories included); editing requires explicitly tapping Edit
+
 ### Fixed
 - SQL injection vector in image serving helper — column name now validated against a whitelist
 - SQL fragment interpolation in receipt save endpoint replaced with parameterized query
@@ -16,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backend port in Docker Compose bound to `127.0.0.1` so it's not exposed to the network
 - Crop endpoint body changed from unvalidated `dict` to a Pydantic model with typed `corners` field
 - Image file serving now verifies resolved paths are contained within `IMAGE_DIR` to prevent path traversal
+- Trends expanded-item column layout misaligned and scroll lock bug on mobile
+- Empty footer bar visible on mobile for verified receipts with no actions
 
 ## [1.3.0] - 2025-02-25
 
