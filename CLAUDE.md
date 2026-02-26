@@ -92,8 +92,9 @@ Before pushing any changes:
 
 1. **Write/update backend tests** — check whether new or changed backend behavior can be covered by unit or integration tests. Backend tests live in `backend/tests/` and use pytest + aiosqlite in-memory DBs. Router tests use `httpx.AsyncClient` with `ASGITransport`. Use `unittest.mock.patch` / `AsyncMock` for external services (e.g. Claude API).
 2. **Write/update frontend tests** — check whether new or changed frontend behavior can be covered by unit tests. Frontend tests are co-located with source files as `src/**/*.test.ts` and use Vitest. Focus on pure logic (reducers, utilities, hooks) rather than component rendering.
-3. **Run the full test suite** — `npm run test` — which runs both backend (`python -m pytest`) and frontend (`vitest run`). Confirm all tests pass.
-4. **Run TypeScript compilation** — `./node_modules/.bin/tsc --noEmit` — and confirm no errors.
+3. **Write/update E2E tests** — for changes to page-level flows, navigation, or cross-component interactions, add or update Playwright tests in `e2e/`. Tests use `@playwright/test` with API route mocking (no real backend needed). Shared mock data and a `mockAllApis` helper live in `e2e/fixtures.ts`. Run with `npm run test:e2e`.
+4. **Run the full test suite** — `npm run test` — which runs both backend (`python -m pytest`) and frontend (`vitest run`). Confirm all tests pass.
+5. **Run TypeScript compilation** — `./node_modules/.bin/tsc --noEmit` — and confirm no errors.
 
 Do not push if any tests fail or TypeScript has errors. Fix the issue first.
 
