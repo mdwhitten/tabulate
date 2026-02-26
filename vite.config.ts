@@ -12,7 +12,7 @@ export default defineConfig({
         changeOrigin: true,
         // Don't proxy HA ingress paths — they're SPA routes, not backend API calls
         bypass(req) {
-          if (req.url?.startsWith('/api/hassio_ingress/')) return req.url
+          if (req.url?.startsWith('/api/hassio_ingress/')) return '/index.html'
         },
       },
     },
