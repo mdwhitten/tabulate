@@ -244,21 +244,24 @@ function CategoryItemsList({ items, isLoading, category, cats }: CategoryItemsLi
   }
 
   const total = items.reduce((s, it) => s + it.price * it.quantity, 0)
+  const hasStore = items.some(it => it.store_name)
 
   return (
     <div className="space-y-0.5">
       {items.map((it, i) => (
-        <div key={i} className="flex items-center gap-3 py-1.5 px-2 rounded-lg text-sm">
-          <span className="flex-1 min-w-0 text-gray-600 truncate">{it.clean_name || it.raw_name}</span>
-          {it.quantity > 1 && (
-            <span className="text-xs text-gray-400 font-mono shrink-0">x{it.quantity}</span>
-          )}
+        <div key={i} className="flex items-center gap-2 py-1.5 px-2 rounded-lg text-sm">
+          <span className="flex-1 min-w-0 text-gray-600 truncate">
+            {it.clean_name || it.raw_name}
+            {it.quantity > 1 && (
+              <span className="text-xs text-gray-400 font-mono ml-1">×{it.quantity}</span>
+            )}
+          </span>
           <span className="font-mono tabular-nums text-gray-700 w-16 text-right shrink-0">
             {fmt(it.price * it.quantity)}
           </span>
-          {it.store_name && (
-            <span className="text-xs text-gray-400 truncate max-w-20 shrink-0 hidden sm:inline">
-              {it.store_name}
+          {hasStore && (
+            <span className="text-xs text-gray-400 truncate w-20 text-right shrink-0 hidden sm:inline">
+              {it.store_name ?? ''}
             </span>
           )}
         </div>
@@ -288,6 +291,9 @@ function CategoryItemsSheet({ category, monthLabel, items, isLoading, cats, onCl
   const backdropRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    // Only lock scroll on mobile — this component is rendered but hidden (sm:hidden)
+    // on desktop, so the effect must not fire there.
+    if (window.matchMedia('(min-width: 640px)').matches) return
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
   }, [])
