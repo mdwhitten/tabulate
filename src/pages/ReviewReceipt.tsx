@@ -454,8 +454,8 @@ export function ReviewReceipt({
             />
           </div>
 
-          {/* Footer */}
-          <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-3 border-t border-gray-100 bg-gray-50">
+          {/* Footer — hidden on mobile when no actions are visible */}
+          <div className={`flex items-center justify-between gap-2 px-3 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 ${isVerified && !isDirty ? 'hidden sm:flex' : ''}`}>
             {/* Secondary actions — desktop only (mobile uses topbar overflow) */}
             <div className="hidden sm:flex gap-2">
               {isFreshUpload && (
