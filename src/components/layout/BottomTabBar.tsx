@@ -62,7 +62,10 @@ export function BottomTabBar({ current, onNavigate, onUpload }: BottomTabBarProp
   useEffect(() => {
     if (openGroup === null) return
     function handleClick(e: MouseEvent) {
-      if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
+      // Check the parent wrapper (contains both popup and its toggle button)
+      // so clicking the toggle doesn't race with the outside-close handler
+      const wrapper = popupRef.current?.parentElement
+      if (wrapper && !wrapper.contains(e.target as Node)) {
         setOpenGroup(null)
       }
     }

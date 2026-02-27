@@ -70,12 +70,11 @@ async def diagnose():
         "path": IMAGE_DIR,
     }
 
-    # Anthropic key
+    # Anthropic key (never expose key material — only report presence)
     key = _os.environ.get("ANTHROPIC_API_KEY", "")
     results["anthropic_key"] = {
         "ok": bool(key and key.startswith("sk-")),
         "set": bool(key),
-        "hint": (key[:12] + "…") if key else "(not set)",
     }
 
     all_ok = all(v.get("ok") for v in results.values())
@@ -100,7 +99,16 @@ async def upload_receipt(
     from PIL import Image as _PILImage, ImageOps as _ImageOps
     import io as _io
 
-    contents = await file.read()
+    # Validate file type before reading
+    _ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/tiff", "image/heic", "image/heif"}
+    if file.content_type and file.content_type not in _ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=422, detail=f"Unsupported file type: {file.content_type}")
+
+    # Read with a size cap (20 MB matches nginx client_max_body_size)
+    _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+    contents = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
 
     # Always normalise EXIF orientation (phone photos are often rotated in metadata)
     # and re-encode as JPEG so downstream tools see correct pixel orientation.
@@ -190,7 +198,7 @@ async def upload_receipt(
          "price": item["price"], "quantity": item["quantity"]}
         for i, item in enumerate(parsed.raw_items)
     ]
-    categorized = await categorize_items(raw_items, store, db)
+    categorized, categorization_failed = await categorize_items(raw_items, store, db)
 
     # Persist line items
     line_items = []
@@ -230,6 +238,7 @@ async def upload_receipt(
         total_verified=verified,
         verification_message=verify_msg,
         thumbnail_path=thumbnail_path,
+        categorization_failed=categorization_failed,
         items=line_items,
     )
 
@@ -315,9 +324,51 @@ async def save_receipt(
     Apply corrections, optionally override the total.
     If approve=True, mark receipt as verified (locked). Otherwise keep current status (draft save).
     """
-    async with db.execute("SELECT id FROM receipts WHERE id = ?", (receipt_id,)) as cur:
-        if not await cur.fetchone():
+    # Normalize empty strings to None so COALESCE works correctly
+    if body.receipt_date is not None and not body.receipt_date.strip():
+        body.receipt_date = None
+    if body.store_name is not None and not body.store_name.strip():
+        body.store_name = None
+
+    # Validate receipt_date is ISO format (YYYY-MM-DD) when provided
+    if body.receipt_date is not None:
+        try:
+            datetime.strptime(body.receipt_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid date format: '{body.receipt_date}'. Expected YYYY-MM-DD.",
+            )
+
+    # Validate manual_total is a reasonable positive number
+    if body.manual_total is not None and body.manual_total < 0:
+        raise HTTPException(status_code=422, detail="Manual total cannot be negative.")
+
+    async with db.execute("SELECT id, receipt_date FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+        row = await cur.fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail="Receipt not found")
+
+    # On approve, ensure a date exists (either from body or already in DB)
+    if body.approve:
+        effective_date = body.receipt_date or row["receipt_date"]
+        if not effective_date:
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot approve a receipt without a date. Please set a receipt date.",
+            )
+
+    # Validate new_items: validate categories exist and are enabled
+    if body.new_items:
+        async with db.execute("SELECT name FROM categories WHERE is_disabled = 0") as cur:
+            valid_cats = {r["name"] for r in await cur.fetchall()}
+        for new_item in body.new_items:
+            cat = new_item.category or "Other"
+            if cat not in valid_cats:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid category '{cat}' for item '{new_item.name}'.",
+                )
 
     # Delete items the user removed
     for item_id in body.deleted_item_ids:
@@ -357,34 +408,34 @@ async def save_receipt(
             price_val = round(float(new_price), 2)
             if price_val > 0:
                 await db.execute(
-                    "UPDATE line_items SET price = ? WHERE id = ?",
-                    (price_val, int(item_id_str)),
+                    "UPDATE line_items SET price = ? WHERE id = ? AND receipt_id = ?",
+                    (price_val, int(item_id_str), receipt_id),
                 )
         except (ValueError, TypeError):
             pass
 
-    new_status = "'verified'" if body.approve else "status"
+    new_status = "verified" if body.approve else None
 
     # If the user manually entered the total, store it and update
     if body.manual_total is not None:
         await db.execute(
-            f"""UPDATE receipts
-               SET status = {new_status},
+            """UPDATE receipts
+               SET status = COALESCE(?, status),
                    total = ?,
                    total_verified = 1,
                    receipt_date = COALESCE(?, receipt_date),
                    store_name = COALESCE(?, store_name)
                WHERE id = ?""",
-            (round(body.manual_total, 2), body.receipt_date, body.store_name, receipt_id),
+            (new_status, round(body.manual_total, 2), body.receipt_date, body.store_name, receipt_id),
         )
     else:
         await db.execute(
-            f"""UPDATE receipts
-               SET status = {new_status},
+            """UPDATE receipts
+               SET status = COALESCE(?, status),
                    receipt_date = COALESCE(?, receipt_date),
                    store_name = COALESCE(?, store_name)
                WHERE id = ?""",
-            (body.receipt_date, body.store_name, receipt_id),
+            (new_status, body.receipt_date, body.store_name, receipt_id),
         )
     await db.commit()
 
@@ -405,6 +456,65 @@ async def save_receipt(
         pass
 
     return {"status": "ok", "receipt_id": receipt_id}
+
+
+# ── Recategorize (retry after failure) ────────────────────────────────────────
+
+@router.post("/{receipt_id}/recategorize")
+async def recategorize_receipt(
+    receipt_id: int,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Re-run AI categorization on a receipt's line items.
+    Called when the initial categorization failed and the user clicks Retry.
+    Only items currently categorized as 'Other' with category_source='ai' are
+    sent to Claude — learned and manual categories are left untouched.
+    """
+    async with db.execute("SELECT store_name FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    store_name = row["store_name"]
+
+    # Fetch line items that need recategorization (AI-assigned "Other" with low confidence)
+    async with db.execute(
+        """SELECT id, raw_name, clean_name, price, quantity
+           FROM line_items
+           WHERE receipt_id = ? AND category = 'Other' AND category_source = 'ai'
+           ORDER BY id""",
+        (receipt_id,),
+    ) as cur:
+        items_rows = await cur.fetchall()
+
+    if not items_rows:
+        return {"status": "ok", "categorization_failed": False, "updated": 0}
+
+    raw_items = [
+        {"id": r["id"], "raw_name": r["raw_name"], "clean_name": r["clean_name"],
+         "price": r["price"], "quantity": r["quantity"]}
+        for r in items_rows
+    ]
+
+    categorized, failed = await categorize_items(raw_items, store_name, db)
+
+    if failed:
+        return {"status": "failed", "categorization_failed": True, "updated": 0}
+
+    # Update line items with new categories
+    updated = 0
+    for item in categorized:
+        if item["category"] != "Other" or item.get("ai_confidence", 0) > 0:
+            await db.execute(
+                """UPDATE line_items
+                   SET category = ?, category_source = ?, ai_confidence = ?
+                   WHERE id = ?""",
+                (item["category"], item["category_source"], item.get("ai_confidence"), item["id"]),
+            )
+            updated += 1
+    await db.commit()
+
+    return {"status": "ok", "categorization_failed": False, "updated": updated}
 
 
 # ── List Receipts ─────────────────────────────────────────────────────────────
@@ -533,7 +643,11 @@ async def delete_receipt(
 
 # ── Image Serving ─────────────────────────────────────────────────────────────
 
+_ALLOWED_IMAGE_FIELDS = frozenset({"image_path", "thumbnail_path"})
+
 async def _get_image_path(receipt_id: int, db: aiosqlite.Connection, field: str) -> str:
+    if field not in _ALLOWED_IMAGE_FIELDS:
+        raise ValueError(f"Invalid image field: {field!r}")
     async with db.execute(
         f"SELECT {field} FROM receipts WHERE id = ?", (receipt_id,)
     ) as cur:
@@ -543,6 +657,11 @@ async def _get_image_path(receipt_id: int, db: aiosqlite.Connection, field: str)
     path = row[field]
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Image file not found")
+    # Ensure the resolved path is within IMAGE_DIR to prevent path traversal
+    real_path = os.path.realpath(path)
+    real_image_dir = os.path.realpath(IMAGE_DIR)
+    if not real_path.startswith(real_image_dir + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
     return path
 
 
@@ -575,6 +694,11 @@ async def get_receipt_thumbnail(
     path = row["thumbnail_path"] or row["image_path"]
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Image file not found")
+    # Ensure the resolved path is within IMAGE_DIR to prevent path traversal
+    real_path = os.path.realpath(path)
+    real_image_dir = os.path.realpath(IMAGE_DIR)
+    if not real_path.startswith(real_image_dir + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     return FileResponse(path, media_type="image/jpeg", headers={
         "Cache-Control": "public, max-age=86400",
@@ -619,10 +743,13 @@ async def receipt_detect_edges(
     return {"corners": corners}
 
 
+class CropBody(BaseModel):
+    corners: list[list[float]]
+
 @router.post("/{receipt_id}/crop")
 async def crop_receipt_image(
     receipt_id: int,
-    body: dict,
+    body: CropBody,
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """
@@ -635,9 +762,9 @@ async def crop_receipt_image(
     from PIL import Image as PILImage
     import io as _io
 
-    corners = body.get("corners")
-    if not corners or len(corners) != 4:
-        raise HTTPException(status_code=422, detail="Provide exactly 4 corners")
+    corners = body.corners
+    if len(corners) != 4 or not all(len(c) == 2 for c in corners):
+        raise HTTPException(status_code=422, detail="Provide exactly 4 corners as [x,y] pairs")
 
     path = await _get_image_path(receipt_id, db, "image_path")
     with open(path, "rb") as f:

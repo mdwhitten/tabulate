@@ -5,6 +5,37 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-02-25
+
+### Added
+- Edit button on verified receipts — unlocks date, store name, and categories for correction while keeping items, prices, and totals locked
+- Categorization failure detection with retry banner on receipt review
+- GitHub Actions workflow for Playwright E2E tests with artifact upload
+- E2E test coverage for editing approved receipts (click Edit, change fields, save) on desktop and mobile
+- Mobile E2E test suites for navigation (hamburger menu), All Receipts (hidden columns, compact badges), Trends (bottom sheet category drill-down), and Learned Items (swipe-to-delete)
+- Playwright `mobile-chrome` (Pixel 5) project for mobile viewport E2E testing
+- Desktop-only skip guards on sidebar navigation and inline expansion tests that fail at mobile viewport
+
+### Changed
+- Verified receipts are now fully read-only by default (categories included); editing requires explicitly tapping Edit
+
+### Fixed
+- Price corrections could modify line items belonging to a different receipt — query now scoped to `receipt_id`
+- Receipt date field accepted arbitrary strings (e.g. `"not-a-date"`) that broke trend queries — now validated as ISO `YYYY-MM-DD`
+- Empty/whitespace-only store name was stored as `""` instead of being treated as null
+- New items accepted nonexistent or disabled categories — now validated against the categories table
+- Negative manual total accepted and stored — now rejected with 422
+- SQL injection vector in image serving helper — column name now validated against a whitelist
+- SQL fragment interpolation in receipt save endpoint replaced with parameterized query
+- Wildcard CORS no longer sends credentials; added `CORS_ORIGINS` env var for explicit origin lists
+- API key prefix no longer leaked in `/api/diagnose` response — only reports presence
+- File upload now validates Content-Type against allowed image types and enforces 20 MB size cap server-side
+- Backend port in Docker Compose bound to `127.0.0.1` so it's not exposed to the network
+- Crop endpoint body changed from unvalidated `dict` to a Pydantic model with typed `corners` field
+- Image file serving now verifies resolved paths are contained within `IMAGE_DIR` to prevent path traversal
+- Trends expanded-item column layout misaligned and scroll lock bug on mobile
+- Empty footer bar visible on mobile for verified receipts with no actions
+
 ## [1.3.0] - 2025-02-25
 
 ### Added

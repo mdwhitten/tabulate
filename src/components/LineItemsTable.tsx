@@ -653,6 +653,7 @@ export function LineItemsTable({
           item={editingItem}
           categories={categories}
           locked={locked}
+          allowCategoryEdit={allowCategoryEdit}
           onNameChange={onNameChange}
           onCategoryChange={onCategoryChange}
           onPriceChange={(id, unitPrice) => onPriceChange(id, unitPrice)}

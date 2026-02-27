@@ -21,6 +21,11 @@ import aiosqlite
 logger = logging.getLogger("tabulate.categorize")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+
+class CategorizationError(Exception):
+    """Raised when Claude API categorization fails (network, auth, parse error)."""
+    pass
+
 # Fallback list used only when DB is unavailable (e.g. during cold startup)
 _BUILTIN_CATEGORIES = [
     "Produce", "Meat & Seafood", "Dairy & Eggs", "Snacks",
@@ -160,14 +165,17 @@ async def categorize_items(
     items: list[dict],   # [{id, raw_name, clean_name}, ...]
     store_name: str,
     db: aiosqlite.Connection,
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """
     Categorize a list of items.
-    Returns list of dicts with added 'category', 'category_source', 'ai_confidence'.
+    Returns (results, categorization_failed) where results is a list of dicts
+    with added 'category', 'category_source', 'ai_confidence', and
+    categorization_failed is True when the Claude API call failed.
     """
     mappings = await load_mappings(db)
     results = []
     unknown = []
+    categorization_failed = False
 
     # Stage 1 — learned mappings (always key on raw_name so the lookup is
     # stable regardless of how clean_name / display_name changes over time)
@@ -186,7 +194,12 @@ async def categorize_items(
 
     # Stage 2 — Claude API for unknown items
     if unknown:
-        ai_results = await _call_claude(unknown, store_name, db)
+        try:
+            ai_results = await _call_claude(unknown, store_name, db)
+        except CategorizationError:
+            categorization_failed = True
+            ai_results = [{"id": i["id"], "category": "Other", "confidence": 0.0} for i in unknown]
+
         for item, ai in zip(unknown, ai_results):
             category = ai.get("category", "Other")
             confidence = float(ai.get("confidence", 0.7))
@@ -205,7 +218,7 @@ async def categorize_items(
     # Restore original order
     order = {item["id"]: i for i, item in enumerate(items)}
     results.sort(key=lambda r: order.get(r["id"], 0))
-    return results
+    return results, categorization_failed
 
 
 async def _call_claude(items: list[dict], store_name: str, db: aiosqlite.Connection) -> list[dict]:
@@ -214,11 +227,9 @@ async def _call_claude(items: list[dict], store_name: str, db: aiosqlite.Connect
     Returns list of {id, category, confidence} in the same order.
     The system prompt is built dynamically so custom categories are included.
     """
-    fallback = [{"id": i["id"], "category": "Other", "confidence": 0.0} for i in items]
-
     if not ANTHROPIC_API_KEY:
         logger.warning("ANTHROPIC_API_KEY not set — skipping AI categorization")
-        return fallback
+        raise CategorizationError("ANTHROPIC_API_KEY not set")
 
     system_prompt = await _build_system_prompt(db)
     payload = [
@@ -238,9 +249,11 @@ async def _call_claude(items: list[dict], store_name: str, db: aiosqlite.Connect
         raw = re.sub(r'^```[a-z]*\n?', '', raw)
         raw = re.sub(r'\n?```$', '', raw)
         return json.loads(raw)
+    except CategorizationError:
+        raise
     except Exception as e:
         logger.error("Claude API error: %s", e)
-        return fallback
+        raise CategorizationError(str(e)) from e
 
 
 async def apply_manual_correction(

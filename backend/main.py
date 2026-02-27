@@ -30,10 +30,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
+_cors_origins = os.environ.get("CORS_ORIGINS", "").strip()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins.split(",") if _cors_origins else ["*"],
+    allow_credentials=bool(_cors_origins),  # only send credentials when origins are explicit
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -120,12 +121,11 @@ async def diagnose():
         "images_dir": _os.environ.get("IMAGE_DIR", "/data/images"),
     }
 
-    # Anthropic key
+    # Anthropic key (never expose key material — only report presence)
     key = _os.environ.get("ANTHROPIC_API_KEY", "")
     results["anthropic_key"] = {
         "ok": bool(key and key.startswith("sk-")),
         "set": bool(key),
-        "hint": (key[:14] + "…") if key else "(not set)",
     }
 
     return {"all_ok": all(v.get("ok") for v in results.values()), "checks": results}

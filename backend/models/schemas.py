@@ -149,4 +149,5 @@ class ProcessingResult(BaseModel):
     total_verified: bool
     verification_message: str
     thumbnail_path: Optional[str] = None
+    categorization_failed: bool = False
     items: List[LineItem]

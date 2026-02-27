@@ -10,7 +10,7 @@ services:
     container_name: tabulate-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"   # localhost only — nginx proxies external access
     env_file:
       - .env
     environment:

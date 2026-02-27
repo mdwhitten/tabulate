@@ -5,8 +5,9 @@ import {
   uploadReceipt,
   saveReceipt,
   deleteReceipt,
+  recategorizeReceipt,
 } from '../api/receipts'
-import type { CropCorners } from '../api/receipts'
+import type { CropCorners, RecategorizeResult } from '../api/receipts'
 import type { SaveReceiptBody } from '../types'
 
 export const receiptKeys = {
@@ -58,6 +59,16 @@ export function useDeleteReceipt() {
     mutationFn: (id: number) => deleteReceipt(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: receiptKeys.list() })
+    },
+  })
+}
+
+export function useRecategorize(receiptId: number) {
+  const qc = useQueryClient()
+  return useMutation<RecategorizeResult, Error>({
+    mutationFn: () => recategorizeReceipt(receiptId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: receiptKeys.detail(receiptId) })
     },
   })
 }
