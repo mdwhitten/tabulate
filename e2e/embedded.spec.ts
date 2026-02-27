@@ -117,7 +117,7 @@ test.describe('Embedded / HA Ingress Mode', () => {
     await tabBar.getByText('Scan').click()
 
     // Upload modal should appear
-    await expect(page.getByText('Upload Receipt')).toBeVisible()
+    await expect(page.getByText('Scan Receipt')).toBeVisible()
   })
 
   test('URLs include the ingress prefix in pushState', async ({ page }) => {
