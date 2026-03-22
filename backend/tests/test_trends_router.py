@@ -7,6 +7,8 @@ Covers:
 - GET /api/trends/stores                        — spending by store
 - GET /api/trends/summary                       — dashboard stats
 """
+from datetime import date, timedelta
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -277,10 +279,13 @@ class TestStoreBreakdown:
 
     @pytest.mark.asyncio
     async def test_months_param(self, db, app):
+        today = date.today()
+        recent = today.replace(day=15).isoformat()
+        old = (today.replace(day=1) - timedelta(days=400)).isoformat()
         # Old receipt outside 1-month window
-        await insert_receipt(db, store_name="OldStore", receipt_date="2025-01-15", total=50.00)
+        await insert_receipt(db, store_name="OldStore", receipt_date=old, total=50.00)
         # Recent receipt
-        await insert_receipt(db, store_name="NewStore", receipt_date="2026-02-15", total=50.00)
+        await insert_receipt(db, store_name="NewStore", receipt_date=recent, total=50.00)
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -338,12 +343,16 @@ class TestDashboardSummary:
     @pytest.mark.asyncio
     async def test_month_total_only_verified_current_month(self, db, app):
         """month_total sums only verified receipts from the current month."""
+        today = date.today()
+        this_month = today.replace(day=15).isoformat()
+        this_month_2 = today.replace(day=min(20, today.day)).isoformat()
+        last_month = (today.replace(day=1) - timedelta(days=15)).isoformat()
         # This month, verified
-        await insert_receipt(db, receipt_date="2026-02-15", total=100.00, status="verified")
+        await insert_receipt(db, receipt_date=this_month, total=100.00, status="verified")
         # This month, pending (should not count)
-        await insert_receipt(db, receipt_date="2026-02-20", total=50.00, status="pending")
+        await insert_receipt(db, receipt_date=this_month_2, total=50.00, status="pending")
         # Last month, verified (should not count)
-        await insert_receipt(db, receipt_date="2026-01-15", total=75.00, status="verified")
+        await insert_receipt(db, receipt_date=last_month, total=75.00, status="verified")
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

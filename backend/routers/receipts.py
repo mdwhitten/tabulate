@@ -100,7 +100,10 @@ async def upload_receipt(
     import io as _io
 
     # Validate file type before reading
-    _ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/tiff", "image/heic", "image/heif"}
+    _ALLOWED_CONTENT_TYPES = {
+        "image/jpeg", "image/png", "image/webp", "image/tiff",
+        "image/heic", "image/heif", "application/pdf",
+    }
     if file.content_type and file.content_type not in _ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=422, detail=f"Unsupported file type: {file.content_type}")
 
@@ -110,18 +113,70 @@ async def upload_receipt(
     if len(contents) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
 
+    # PDF handling: extract embedded text directly when available, render to
+    # image for thumbnail/vision.  Falls back to Tesseract only for scanned PDFs.
+    is_pdf = (
+        (file.content_type == "application/pdf")
+        or contents[:5] == b"%PDF-"
+    )
+    pdf_text: str | None = None   # set when PDF has usable embedded text
+    if is_pdf:
+        try:
+            import pymupdf
+            doc = pymupdf.open(stream=contents, filetype="pdf")
+            if doc.page_count == 0:
+                raise HTTPException(status_code=422, detail="PDF has no pages")
+
+            # Extract embedded text from all pages
+            raw_text = "\n".join(page.get_text() for page in doc).strip()
+            if raw_text:
+                pdf_text = raw_text
+                logger.info("Extracted %d chars of embedded text from %d-page PDF",
+                            len(raw_text), doc.page_count)
+
+            # Render pages to image for thumbnail and Vision enrichment
+            page_images = []
+            for page in doc:
+                pix = page.get_pixmap(dpi=300)
+                page_img = _PILImage.open(_io.BytesIO(pix.tobytes("jpeg")))
+                page_images.append(page_img)
+            doc.close()
+
+            if len(page_images) == 1:
+                combined = page_images[0]
+            else:
+                total_width = max(img.width for img in page_images)
+                total_height = sum(img.height for img in page_images)
+                combined = _PILImage.new("RGB", (total_width, total_height), (255, 255, 255))
+                y_offset = 0
+                for img in page_images:
+                    combined.paste(img, (0, y_offset))
+                    y_offset += img.height
+
+            _buf = _io.BytesIO()
+            combined.save(_buf, format="JPEG", quality=92, optimize=True)
+            contents = _buf.getvalue()
+            logger.info("Rendered %d-page PDF to JPEG (%d bytes)", len(page_images), len(contents))
+        except HTTPException:
+            raise
+        except ImportError:
+            raise HTTPException(status_code=500, detail="PDF support not available (pymupdf not installed)")
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Failed to process PDF: {e}")
+
     # Always normalise EXIF orientation (phone photos are often rotated in metadata)
     # and re-encode as JPEG so downstream tools see correct pixel orientation.
-    try:
-        _img = _PILImage.open(_io.BytesIO(contents))
-        _img = _ImageOps.exif_transpose(_img)
-        if _img.mode not in ("RGB", "L"):
-            _img = _img.convert("RGB")
-        _buf = _io.BytesIO()
-        _img.save(_buf, format="JPEG", quality=92, optimize=True)
-        contents = _buf.getvalue()
-    except Exception as e:
-        logger.warning("EXIF normalise failed, using raw bytes: %s", e)
+    if not is_pdf:
+        try:
+            _img = _PILImage.open(_io.BytesIO(contents))
+            _img = _ImageOps.exif_transpose(_img)
+            if _img.mode not in ("RGB", "L"):
+                _img = _img.convert("RGB")
+            _buf = _io.BytesIO()
+            _img.save(_buf, format="JPEG", quality=92, optimize=True)
+            contents = _buf.getvalue()
+        except Exception as e:
+            logger.warning("EXIF normalise failed, using raw bytes: %s", e)
 
     # Apply user crop if provided (corners as fractions of EXIF-corrected image dimensions)
     if crop_corners:
@@ -158,18 +213,22 @@ async def upload_receipt(
     thumb_path = os.path.join(IMAGE_DIR, thumb_filename)
     thumbnail_path = generate_thumbnail(contents, thumb_path)
 
-    # OCR — catch all exceptions so we return a clean 422/500 instead of a raw 500
-    try:
-        ocr_text = extract_text_from_image(contents)
-    except Exception as e:
-        if os.path.exists(image_path):
-            os.remove(image_path)
-        err_type = type(e).__name__
-        err_msg  = str(e)
-        if 'tesseract' in err_msg.lower() or 'Tesseract' in err_type:
-            raise HTTPException(status_code=500,
-                detail='Tesseract OCR not found in container. Run: docker compose build --no-cache')
-        raise HTTPException(status_code=422, detail=f'OCR failed ({err_type}): {err_msg}')
+    # Text extraction — use embedded PDF text when available, fall back to Tesseract OCR
+    if pdf_text:
+        ocr_text = pdf_text
+        logger.info("Using embedded PDF text, skipping Tesseract OCR")
+    else:
+        try:
+            ocr_text = extract_text_from_image(contents)
+        except Exception as e:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+            err_type = type(e).__name__
+            err_msg  = str(e)
+            if 'tesseract' in err_msg.lower() or 'Tesseract' in err_type:
+                raise HTTPException(status_code=500,
+                    detail='Tesseract OCR not found in container. Run: docker compose build --no-cache')
+            raise HTTPException(status_code=422, detail=f'OCR failed ({err_type}): {err_msg}')
 
     # Parse — Tesseract regex heuristics first, then Claude Vision enrichment
     parsed = parse_receipt_text(ocr_text)

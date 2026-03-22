@@ -71,12 +71,21 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const upload   = useUploadReceipt()
 
-  // Step 1 — file selected: go to crop stage
+  // Step 1 — file selected: go to crop stage (or skip crop for PDFs)
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/') && file.type !== 'application/pdf') return
     setPendingFile(file)
-    setStage('crop')
-  }, [])
+    if (file.type === 'application/pdf') {
+      // PDFs are digital documents — skip crop and upload directly
+      setStage('uploading')
+      upload.mutateAsync({ file, cropCorners: null }).then(onSuccess).catch(() => {
+        setStage('pick')
+        setPendingFile(null)
+      })
+    } else {
+      setStage('crop')
+    }
+  }, [upload, onSuccess])
 
   // Step 2 — crop confirmed or skipped: upload
   const doUpload = useCallback(async (file: File, cropCorners?: CropCorners | null) => {
