@@ -18,12 +18,19 @@ from httpx import ASGITransport, AsyncClient
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def make_tiny_pdf(pages: int = 1) -> bytes:
-    """Create a minimal valid PDF with the given number of blank pages using pymupdf."""
+def make_tiny_pdf(pages: int = 1, text: str | None = None) -> bytes:
+    """Create a minimal valid PDF using pymupdf.
+
+    If *text* is provided it is inserted on the first page (simulating a
+    text-based / digital PDF).  Otherwise pages are blank (simulating a
+    scanned image-only PDF).
+    """
     import pymupdf
     doc = pymupdf.open()
-    for _ in range(pages):
-        doc.new_page(width=200, height=400)
+    for i in range(pages):
+        page = doc.new_page(width=200, height=400)
+        if text and i == 0:
+            page.insert_text((10, 30), text, fontsize=10)
     pdf_bytes = doc.tobytes()
     doc.close()
     return pdf_bytes
@@ -164,7 +171,7 @@ class TestPdfUpload:
             )
 
         assert resp.status_code == 422
-        assert "Failed to convert PDF" in resp.json()["detail"]
+        assert "Failed to process PDF" in resp.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_unsupported_type_still_rejected(self, db, app):
@@ -230,3 +237,73 @@ class TestPdfUpload:
             )
 
         assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
+    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.parse_receipt_text")
+    @patch("routers.receipts.extract_text_from_image")
+    async def test_text_pdf_skips_tesseract(
+        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app, tmp_path
+    ):
+        """A PDF with embedded text should use that text directly, skipping Tesseract."""
+        mock_parse.return_value = MOCK_PARSED
+        mock_vision.return_value = MOCK_PARSED
+        mock_cat.return_value = (
+            [{"id": 0, "raw_name": "BANANA", "clean_name": "Banana",
+              "price": 1.50, "quantity": 1, "category": "Produce",
+              "category_source": "ai", "ai_confidence": 0.9}],
+            False,
+        )
+
+        pdf_bytes = make_tiny_pdf(pages=1, text="BANANA 1.50\nTOTAL 1.50")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/receipts/upload",
+                files={"file": ("receipt.pdf", pdf_bytes, "application/pdf")},
+            )
+
+        assert resp.status_code == 200
+        # Tesseract should NOT have been called — text was extracted from PDF
+        mock_ocr.assert_not_called()
+        # parse_receipt_text should have been called with the embedded text
+        mock_parse.assert_called_once()
+        call_arg = mock_parse.call_args[0][0]
+        assert "BANANA" in call_arg
+
+    @pytest.mark.asyncio
+    @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
+    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.parse_receipt_text")
+    @patch("routers.receipts.extract_text_from_image")
+    async def test_scanned_pdf_falls_back_to_tesseract(
+        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app, tmp_path
+    ):
+        """A scanned PDF (no embedded text) should fall back to Tesseract OCR."""
+        mock_ocr.return_value = "BANANA 1.50"
+        mock_parse.return_value = MOCK_PARSED
+        mock_vision.return_value = MOCK_PARSED
+        mock_cat.return_value = (
+            [{"id": 0, "raw_name": "BANANA", "clean_name": "Banana",
+              "price": 1.50, "quantity": 1, "category": "Produce",
+              "category_source": "ai", "ai_confidence": 0.9}],
+            False,
+        )
+
+        # Blank PDF — no embedded text, simulating a scanned document
+        pdf_bytes = make_tiny_pdf(pages=1)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/receipts/upload",
+                files={"file": ("scanned.pdf", pdf_bytes, "application/pdf")},
+            )
+
+        assert resp.status_code == 200
+        # Tesseract SHOULD have been called since PDF had no embedded text
+        mock_ocr.assert_called_once()
