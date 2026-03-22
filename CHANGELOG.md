@@ -5,6 +5,16 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-22
+
+### Added
+- PDF receipt upload support — single and multi-page PDFs are converted to JPEG via `pymupdf` for thumbnails and Vision enrichment
+- Direct text extraction from text-based PDFs, skipping Tesseract OCR for faster processing
+- Frontend skips crop stage for PDF uploads since digital documents don't need perspective correction
+
+### Fixed
+- Trends router tests used hardcoded Feb 2026 dates causing failures in later months — now use dynamic dates relative to today
+
 ## [1.3.1] - 2026-02-25
 
 ### Added
