@@ -24,6 +24,7 @@ from models.schemas import ReceiptSummary, Receipt, ProcessingResult, LineItem
 from services.ocr_service import extract_text_from_image, parse_receipt_text, parse_receipt_with_vision, verify_total
 from services.categorize_service import categorize_items, apply_manual_correction, persist_approved_mappings
 from services.image_service import generate_thumbnail, detect_receipt_edges
+import pymupdf  # PDF page rendering + text extraction
 
 logger = logging.getLogger("tabulate.receipts")
 router = APIRouter()
@@ -122,7 +123,6 @@ async def upload_receipt(
     pdf_text: str | None = None   # set when PDF has usable embedded text
     if is_pdf:
         try:
-            import pymupdf
             doc = pymupdf.open(stream=contents, filetype="pdf")
             if doc.page_count == 0:
                 raise HTTPException(status_code=422, detail="PDF has no pages")
@@ -159,8 +159,6 @@ async def upload_receipt(
             logger.info("Rendered %d-page PDF to JPEG (%d bytes)", len(page_images), len(contents))
         except HTTPException:
             raise
-        except ImportError:
-            raise HTTPException(status_code=500, detail="PDF support not available (pymupdf not installed)")
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Failed to process PDF: {e}")
 
