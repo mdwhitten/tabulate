@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Install Tesseract OCR + English language data + HEIC/HEIF support
+# Install Tesseract OCR + English language data + HEIC/HEIF support + poppler (PDF rendering)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libheif-dev \
     libheif1 \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

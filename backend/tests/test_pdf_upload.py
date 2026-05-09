@@ -19,21 +19,46 @@ from httpx import ASGITransport, AsyncClient
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def make_tiny_pdf(pages: int = 1, text: str | None = None) -> bytes:
-    """Create a minimal valid PDF using pymupdf.
+    """Create a minimal valid PDF using pypdf.
 
     If *text* is provided it is inserted on the first page (simulating a
     text-based / digital PDF).  Otherwise pages are blank (simulating a
     scanned image-only PDF).
     """
-    import pymupdf
-    doc = pymupdf.open()
+    from pypdf import PdfWriter
+    from pypdf.generic import (
+        ArrayObject, DecodedStreamObject, DictionaryObject,
+        NameObject, NumberObject, TextStringObject,
+    )
+
+    writer = PdfWriter()
     for i in range(pages):
-        page = doc.new_page(width=200, height=400)
+        page = writer.add_blank_page(width=200, height=400)
         if text and i == 0:
-            page.insert_text((10, 30), text, fontsize=10)
-    pdf_bytes = doc.tobytes()
-    doc.close()
-    return pdf_bytes
+            font_dict = DictionaryObject({
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            })
+            resources = DictionaryObject({
+                NameObject("/Font"): DictionaryObject({
+                    NameObject("/F1"): font_dict,
+                }),
+            })
+            lines = text.split("\n")
+            stream_parts = ["BT", "/F1 10 Tf"]
+            for j, line in enumerate(lines):
+                escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+                stream_parts.append(f"10 {370 - j * 14} Td")
+                stream_parts.append(f"({escaped}) Tj")
+            stream_parts.append("ET")
+            content = DecodedStreamObject()
+            content.set_data("\n".join(stream_parts).encode())
+            page[NameObject("/Resources")] = resources
+            page[NameObject("/Contents")] = writer._add_object(content)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
 
 
 def make_tiny_jpeg() -> bytes:
