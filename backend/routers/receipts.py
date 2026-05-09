@@ -122,25 +122,24 @@ async def upload_receipt(
     pdf_text: str | None = None   # set when PDF has usable embedded text
     if is_pdf:
         try:
-            import pymupdf
-            doc = pymupdf.open(stream=contents, filetype="pdf")
-            if doc.page_count == 0:
+            from pdf2image import convert_from_bytes
+            from pypdf import PdfReader
+
+            reader = PdfReader(_io.BytesIO(contents))
+            if len(reader.pages) == 0:
                 raise HTTPException(status_code=422, detail="PDF has no pages")
 
             # Extract embedded text from all pages
-            raw_text = "\n".join(page.get_text() for page in doc).strip()
+            raw_text = "\n".join(
+                (page.extract_text() or "") for page in reader.pages
+            ).strip()
             if raw_text:
                 pdf_text = raw_text
                 logger.info("Extracted %d chars of embedded text from %d-page PDF",
-                            len(raw_text), doc.page_count)
+                            len(raw_text), len(reader.pages))
 
             # Render pages to image for thumbnail and Vision enrichment
-            page_images = []
-            for page in doc:
-                pix = page.get_pixmap(dpi=300)
-                page_img = _PILImage.open(_io.BytesIO(pix.tobytes("jpeg")))
-                page_images.append(page_img)
-            doc.close()
+            page_images = convert_from_bytes(contents, dpi=300, fmt="jpeg")
 
             if len(page_images) == 1:
                 combined = page_images[0]
@@ -160,7 +159,7 @@ async def upload_receipt(
         except HTTPException:
             raise
         except ImportError:
-            raise HTTPException(status_code=500, detail="PDF support not available (pymupdf not installed)")
+            raise HTTPException(status_code=500, detail="PDF support not available (pdf2image/pypdf not installed)")
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Failed to process PDF: {e}")
 
