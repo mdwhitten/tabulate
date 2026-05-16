@@ -6,10 +6,14 @@ Covers:
 - verify_total: receipt total verification against extracted items
 - _detect_store_from_text: keyword-based store name detection
 - _prepare_image_for_vision: magic-byte media type detection
+- parse_receipt_with_vision: Claude Vision prompt assembly (header-skip + subtotal cross-check)
 """
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from services.ocr_service import (
     parse_receipt_text,
+    parse_receipt_with_vision,
     verify_total,
     _detect_store_from_text,
     _prepare_image_for_vision,
@@ -318,3 +322,77 @@ class TestPrepareImageMagicBytes:
         data = b'\x00\x00\x00\x00' + b'\x00' * 100
         _, media_type = _prepare_image_for_vision(data)
         assert media_type == "image/jpeg"
+
+
+# ── parse_receipt_with_vision — prompt assembly ──────────────────────────────
+
+class TestVisionPromptContent:
+    """
+    Verify the prompt sent to Claude Vision includes the safeguards that
+    prevent the "header transaction number bleeds into item 1" misalignment.
+
+    We don't exercise the real Claude API — we mock AsyncAnthropic and inspect
+    the prompt text that would have been sent.
+    """
+
+    def _capture_prompt(self, ocr_text: str) -> str:
+        """Call parse_receipt_with_vision under a mocked client and return the
+        text portion of the user message that was sent."""
+        fallback = ParsedReceipt()
+        fallback.raw_text = ocr_text
+
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text='{"items": []}')]
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_message)
+
+        # Tiny valid JPEG header — _prepare_image_for_vision needs to recognise
+        # it as JPEG without invoking Pillow on bogus bytes.
+        jpeg_bytes = b'\xff\xd8\xff\xe0' + b'\x00' * 200
+
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}):
+            with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+                import asyncio
+                asyncio.run(parse_receipt_with_vision(jpeg_bytes, fallback))
+
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        text_blocks = [
+            block["text"]
+            for block in call_kwargs["messages"][0]["content"]
+            if block.get("type") == "text"
+        ]
+        assert text_blocks, "prompt should contain at least one text block"
+        return text_blocks[0]
+
+    def test_prompt_warns_about_receipt_header(self):
+        """The prompt must tell Claude to skip the H-E-B transaction number
+        above item 1 — that's the root cause of the alignment bug where the
+        trailing digits of '1025 6540 0509 2621 2600 269' become item 1's price."""
+        prompt = self._capture_prompt("any ocr text")
+        lower = prompt.lower()
+        assert "transaction number" in lower
+        assert "not a price" in lower or "is not a price" in lower
+        # And it should give Claude a concrete example so the instruction sticks.
+        assert "1025" in prompt
+
+    def test_prompt_includes_subtotal_cross_check(self):
+        """After extracting items the prompt must ask Claude to verify the
+        sum equals the printed subtotal — a misaligned price won't match."""
+        prompt = self._capture_prompt("any ocr text")
+        assert "SUBTOTAL CROSS-CHECK" in prompt
+        # The instruction must reference the printed subtotal.
+        assert "Subtotal" in prompt
+
+    def test_ocr_hint_warns_about_header_noise(self):
+        """When OCR text is included as a hint the prompt must warn that
+        Tesseract often merges header digits onto item 1's line."""
+        prompt = self._capture_prompt("1025 6540 0509 2621 2600 269\n1 JS ORG ... 269")
+        # The OCR hint block should be present
+        assert "<ocr_text>" in prompt
+        # And it should warn about header bleed
+        assert "header transaction number" in prompt.lower() or "merges" in prompt.lower()
+
+    def test_no_ocr_hint_when_text_empty(self):
+        """If the OCR fallback has no text, the prompt should omit the hint block."""
+        prompt = self._capture_prompt("")
+        assert "<ocr_text>" not in prompt

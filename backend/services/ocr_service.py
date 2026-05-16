@@ -424,10 +424,13 @@ async def parse_receipt_with_vision(
     # Include Tesseract OCR text as a hint — gives Claude a text anchor for
     # name↔price alignment, which prevents the "price shifted one row" bug that
     # occurs when Vision tries to align two columns independently from the image.
+    # WARNING: Tesseract often merges the receipt header transaction number into
+    # the first item line, so the prompt explicitly tells Claude not to trust
+    # numeric content from the OCR hint's first few lines.
     ocr_hint = ""
     if ocr_fallback.raw_text and ocr_fallback.raw_text.strip():
         ocr_hint = f"""
-The following text was extracted from this receipt by OCR (may be incomplete or contain errors — use the image as the primary source, but use this to help align item names with their correct prices):
+The following text was extracted from this receipt by OCR (may be incomplete or contain errors — use the IMAGE as the primary source for all numbers; this OCR text is only an aid for spelling item names. Tesseract frequently merges the receipt header transaction number onto item 1's line, so disregard any digits in the OCR text that aren't clearly visible at the right side of an item line in the image):
 
 <ocr_text>
 {ocr_fallback.raw_text.strip()}
@@ -437,6 +440,8 @@ The following text was extracted from this receipt by OCR (may be incomplete or 
     prompt = f"""You are a receipt data extractor. Carefully transcribe this grocery receipt image line by line, then output structured JSON.
 
 STEP 1 — Read the receipt line by line, exactly as printed. Do this in your head before outputting JSON.
+
+SKIP THE HEADER. H-E-B receipts begin with the store logo and a long transaction number (e.g. "1025 6540 0509 2621 2600 269") above the first item. This number is NOT a price and its trailing digits do NOT belong to item 1. The first real item starts at the line numbered "1 ITEM_NAME …".
 
 STEP 2 — Apply these rules to parse items:
 
@@ -475,6 +480,8 @@ SINGLE-LINE items have price at the right end of the name line:
 KEY RULE: An indented detail line (one that starts with spaces, or begins with a number like "0.69" or "2 Ea.") belongs to the NUMBERED item ABOVE it. It is NOT a separate item, and its numbers do NOT belong to the next numbered item below it.
 
 ANTI-SHIFT CHECK: After reading all items, verify that consecutive item prices make sense. If item N has no indented detail line yet its price looks like a quantity×rate expression (e.g. "1.71" when the visible number at the right of item N's name line is actually "7.24"), you have shifted a detail-line number up by one row. Re-read that item from the image.
+
+SUBTOTAL CROSS-CHECK: After extracting all items, compute sum(line_total). This sum should equal the receipt's printed Subtotal (within $0.05). If they differ by more than $0.05, you have either missed an item, double-counted one, or assigned the wrong price to one — most commonly item 1, whose price can get contaminated by header digits. Re-read the items from the image until the sum matches.
 {ocr_hint}
 STEP 3 — Output ONLY this JSON (no prose, no markdown):
 
