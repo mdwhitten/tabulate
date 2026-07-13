@@ -5,6 +5,21 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-07-13
+
+### Added
+- Multi-upload — select several receipt images/PDFs at once, or snap photos one after another, and process the whole batch in parallel
+- Review queue — after a multi-upload, review receipts one at a time; Approve or Skip advances to the next, and the last returns to the receipts list (others stay pending)
+- On-device document scanning — automatic paper-edge detection and true perspective correction now run in the browser (vendored OpenCV.js + jscanify), so a clean, deskewed image is uploaded for OCR and Claude Vision; falls back to the server detector or the original image when the scanner can't load
+- README screenshots
+
+### Changed
+- Image uploads are perspective-corrected client-side instead of relying on the server-side numpy edge detector (the server detector is retained as a fallback)
+
+### Fixed
+- Trends `/stores` breakdown tests used hardcoded Feb 2026 dates and failed once outside the endpoint's 3-month window — now use dates relative to today
+- Removed the unused `_fallback_corners` helper in the image service
+
 ## [1.4.1] - 2026-05-09
 
 ### Changed

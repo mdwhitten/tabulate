@@ -236,8 +236,10 @@ class TestStoreBreakdown:
 
     @pytest.mark.asyncio
     async def test_returns_store_data(self, db, app):
-        await insert_receipt(db, store_name="Costco", receipt_date="2026-02-15", total=100.00)
-        await insert_receipt(db, store_name="Costco", receipt_date="2026-02-20", total=80.00)
+        # Use a recent date so the receipts fall inside the endpoint's 3-month window.
+        recent = date.today().replace(day=15).isoformat()
+        await insert_receipt(db, store_name="Costco", receipt_date=recent, total=100.00)
+        await insert_receipt(db, store_name="Costco", receipt_date=recent, total=80.00)
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -253,8 +255,9 @@ class TestStoreBreakdown:
 
     @pytest.mark.asyncio
     async def test_ordered_by_total_desc(self, db, app):
-        await insert_receipt(db, store_name="SmallShop", receipt_date="2026-02-15", total=20.00)
-        await insert_receipt(db, store_name="BigStore", receipt_date="2026-02-15", total=200.00)
+        recent = date.today().replace(day=15).isoformat()
+        await insert_receipt(db, store_name="SmallShop", receipt_date=recent, total=20.00)
+        await insert_receipt(db, store_name="BigStore", receipt_date=recent, total=200.00)
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

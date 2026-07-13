@@ -8,12 +8,20 @@
  * - Pass `file` for new uploads (pre-upload crop).
  * - Pass `receiptId` for editing the crop of an existing receipt.
  * - `onSkip` (optional) shown when `file` is provided — uploads without crop.
+ *
+ * Detection + correction run client-side via the vendored OpenCV.js + jscanify
+ * scanner (real quad detection + perspective warp). For new uploads a corrected
+ * JPEG is produced in-browser and returned through `onConfirmImage`. If the
+ * scanner can't load we fall back to the server edge detector and the server's
+ * axis-aligned crop (`onConfirm`).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import type { CropCorners } from '../api/receipts'
 import { detectEdges, detectEdgesRaw, receiptImageUrl } from '../api/receipts'
+import { loadScanner } from '../lib/opencv'
+import { detectCorners, extractCorrected } from '../lib/scanner'
 
 const HANDLE_R = 14   // corner handle radius, canvas px
 const MAX_W    = 600  // max canvas display width
@@ -27,22 +35,29 @@ interface CropModalProps {
   file?: File | null
   /** For editing an existing receipt's crop */
   receiptId?: number | null
-  /** Called with fractional corners when user clicks Apply */
+  /** Called with fractional corners when user clicks Apply (server-side crop) */
   onConfirm: (corners: CropCorners) => void
+  /**
+   * Called (new uploads only) with a client-side perspective-corrected JPEG
+   * when the scanner is available. Preferred over `onConfirm` for `file` mode.
+   */
+  onConfirmImage?: (blob: Blob) => void
   /** Called when user clicks Skip (new upload only, uploads without crop) */
   onSkip?: () => void
   onCancel: () => void
 }
 
-export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: CropModalProps) {
+export function CropModal({ file, receiptId, onConfirm, onConfirmImage, onSkip, onCancel }: CropModalProps) {
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const imgRef       = useRef<HTMLImageElement | null>(null)
   const scaleRef     = useRef(1)
   const cornersRef   = useRef<Corners>([[0,0],[0,0],[0,0],[0,0]])
   const draggingRef  = useRef<number | null>(null)
+  const scannerReadyRef = useRef(false)
 
   const [ready, setReady]     = useState(false)
   const [detecting, setDetecting] = useState(false)
+  const [applying, setApplying]   = useState(false)
 
   // ── Draw ──────────────────────────────────────────────────────────────────
 
@@ -152,12 +167,21 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
       // draw() called in a follow-up rAF after React shows the canvas
       requestAnimationFrame(() => { if (!cancelled) draw() })
 
-      // Background edge detection
+      // Background edge detection — prefer the client-side scanner (real quad
+      // detection + perspective warp), fall back to the server detector.
       setDetecting(true)
       try {
-        const detected = file
-          ? await detectEdgesRaw(file)
-          : await detectEdges(receiptId!)
+        let detected: CropCorners | null = null
+        try {
+          await loadScanner()
+          scannerReadyRef.current = true
+          detected = detectCorners(img)
+        } catch {
+          scannerReadyRef.current = false
+        }
+        if (!scannerReadyRef.current) {
+          detected = file ? await detectEdgesRaw(file) : await detectEdges(receiptId!)
+        }
         if (!cancelled && detected) {
           cornersRef.current = fracToCanvas(detected)
           draw()
@@ -216,12 +240,27 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
 
   // ── Confirm ───────────────────────────────────────────────────────────────
 
-  function handleConfirm() {
+  async function handleConfirm() {
     const canvas = canvasRef.current!
     const frac   = cornersRef.current.map(([x, y]) => [
       x / canvas.width,
       y / canvas.height,
     ]) as CropCorners
+
+    // New-upload path with the scanner available: perspective-correct in the
+    // browser and hand back a corrected JPEG (no server-side crop needed).
+    if (file && onConfirmImage && imgRef.current && scannerReadyRef.current) {
+      setApplying(true)
+      try {
+        const blob = await extractCorrected(imgRef.current, frac)
+        onConfirmImage(blob)
+        return
+      } catch {
+        // Fall back to server-side axis-aligned crop below.
+      } finally {
+        setApplying(false)
+      }
+    }
     onConfirm(frac)
   }
 
@@ -295,9 +334,10 @@ export function CropModal({ file, receiptId, onConfirm, onSkip, onCancel }: Crop
           )}
           <button
             onClick={handleConfirm}
-            disabled={!ready}
+            disabled={!ready || applying}
             className="flex items-center gap-2 px-4 py-2 bg-[#03a9f4] text-white text-sm font-semibold rounded-xl hover:bg-[#0290d1] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
+            {applying && <Loader2 className="w-4 h-4 animate-spin" />}
             Apply Crop &amp; Scan
           </button>
         </div>

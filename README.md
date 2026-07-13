@@ -2,6 +2,8 @@
 
 Self-hosted grocery receipt tracker. Scan receipts with your phone or browser, let OCR + Claude Vision extract items and categories, then review and verify your spending.
 
+![Dashboard](docs/screenshots/dashboard.png)
+
 ## Stack
 
 | Layer | Technology |
@@ -14,12 +16,24 @@ Self-hosted grocery receipt tracker. Scan receipts with your phone or browser, l
 
 ## Features
 
-- **Upload receipts** — drag-and-drop or file picker, JPG/PNG/PDF
+- **Upload one or many** — drag-and-drop, multi-select, or snap photos in succession; JPG/PNG/PDF
+- **On-device scanning** — automatic paper-edge detection and perspective correction run right in your browser (OpenCV.js + jscanify), so OCR gets a clean, deskewed image — no native app required
+- **Review queue** — process a batch of receipts in parallel, then approve them one after another
 - **OCR + AI parsing** — Tesseract extracts text; Claude Vision enriches store name, date, and line items
 - **Review & verify** — correct categories and prices before saving; total verification check
 - **Learned items** — corrections are remembered and applied automatically on future scans
 - **Trends** — stacked bar chart of monthly spending by category with month-over-month deltas
 - **Categories** — built-in and custom categories with icons, colors, enable/disable
+
+## Screenshots
+
+| Review & verify | Multi-upload |
+|---|---|
+| ![Review a receipt](docs/screenshots/review.png) | ![Scan several receipts at once](docs/screenshots/multi-upload.png) |
+
+| Spending trends | All receipts |
+|---|---|
+| ![Monthly spending trends](docs/screenshots/trends.png) | ![All receipts list](docs/screenshots/receipts.png) |
 
 ## Quick Start
 

@@ -228,14 +228,3 @@ def _find_receipt_corners(
         return None
 
     return [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
-
-
-def _fallback_corners(w: int, h: int) -> list[list[float]]:
-    """Return the full-image corners with a small inset."""
-    pad = int(min(w, h) * 0.02)
-    return [
-        [pad, pad],
-        [w - pad, pad],
-        [w - pad, h - pad],
-        [pad, h - pad],
-    ]
