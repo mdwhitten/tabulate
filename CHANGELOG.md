@@ -5,6 +5,11 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-07-13
+
+### Fixed
+- Release pipeline: switched the Docker build cache from the GitHub Actions cache (`type=gha`) to a per-image registry cache (`type=registry`, a `:buildcache` tag in ghcr) to fix intermittent `error writing layer blob: failed to reserve cache` failures during release builds
+
 ## [1.5.0] - 2026-07-13
 
 ### Added

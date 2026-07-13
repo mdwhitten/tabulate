@@ -93,8 +93,8 @@ jobs:
           push: true
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache,mode=max
 
       - name: Build & push nginx
         uses: docker/build-push-action@v6
@@ -104,8 +104,8 @@ jobs:
           push: true
           tags: ${{ steps.meta-nginx.outputs.tags }}
           labels: ${{ steps.meta-nginx.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE_NGINX }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NGINX }}:buildcache,mode=max
 
       - name: Create GitHub release
         env:
