@@ -8,7 +8,7 @@ import type { LocalItem } from '../components/LineItemsTable'
 import { nextTempId } from '../components/LineItemsTable'
 import { ReceiptPreview } from '../components/ReceiptPreview'
 import { CropModal } from '../components/CropModal'
-import { cropReceipt } from '../api/receipts'
+import { replaceReceiptImage } from '../api/receipts'
 import { useRecategorize } from '../hooks/useReceipts'
 import { fmt } from '../lib/utils'
 import { reviewReducer, isDirty as computeIsDirty } from './reviewReducer'
@@ -450,17 +450,17 @@ export function ReviewReceipt({
         </div>
       </div>
 
-      {/* Re-crop modal */}
+      {/* Re-crop modal — re-crops from the pristine original and replaces the image */}
       {cropOpen && (
         <CropModal
           receiptId={receipt.id}
-          onConfirm={async corners => {
+          onConfirmImage={async blob => {
             setCropOpen(false)
             try {
-              await cropReceipt(receipt.id, corners)
+              await replaceReceiptImage(receipt.id, blob)
               setImgCacheBust(n => n + 1)
             } catch (e) {
-              console.error('Crop failed', e)
+              console.error('Re-crop failed', e)
             }
           }}
           onCancel={() => setCropOpen(false)}

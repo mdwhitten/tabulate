@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { jscanifyToCropCorners, cropCornersToJscanify, outputSize } from './scanner'
+import { jscanifyToCropCorners, cropCornersToJscanify, outputSize, plausibleQuad } from './scanner'
 import type { CropCorners } from '../api/receipts'
+
+describe('plausibleQuad', () => {
+  it('accepts a normal receipt-sized quad', () => {
+    expect(plausibleQuad([[0.1, 0.05], [0.85, 0.08], [0.88, 0.92], [0.12, 0.95]])).toBe(true)
+  })
+  it('rejects a quad that fills essentially the whole frame (grabbed the table)', () => {
+    expect(plausibleQuad([[0, 0], [1, 0], [1, 1], [0, 1]])).toBe(false)
+  })
+  it('rejects a tiny speck', () => {
+    expect(plausibleQuad([[0.4, 0.4], [0.45, 0.4], [0.45, 0.45], [0.4, 0.45]])).toBe(false)
+  })
+})
 
 describe('jscanifyToCropCorners', () => {
   it('maps jscanify corners to fractional CropCorners in TL,TR,BR,BL order', () => {
