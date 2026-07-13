@@ -16,7 +16,8 @@ import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
 import type { Receipt, SaveReceiptBody, DuplicateMatch } from './types'
-import { ArrowLeft, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2, Pencil } from 'lucide-react'
+import { advanceBatch, batchPosition } from './lib/batch'
+import { ArrowLeft, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2, Pencil, SkipForward } from 'lucide-react'
 import './index.css'
 
 // ── Ingress-aware URL helpers ─────────────────────────────────────────────────
@@ -195,10 +196,16 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDu
 export default function App() {
   // Initialise state from the current URL so direct links and refreshes work
   const [route, setRoute]             = useState<RouteState>(() => parseUrl(window.location.pathname))
-  const [freshResult, setFreshResult] = useState<ProcessingResult | null>(null)
+  // A "batch" is the queue of freshly-uploaded receipts being reviewed. A
+  // single upload is just a batch of one. `freshResult` is the current one.
+  const [batch, setBatch]             = useState<ProcessingResult[]>([])
+  const [batchIndex, setBatchIndex]   = useState(0)
   const [uploadOpen, setUploadOpen]   = useState(false)
   const [dupeWarning, setDupeWarning] = useState<DupeWarning | null>(null)
   const shellRef = useRef<AppShellRef>(null)
+
+  const freshResult = batch[batchIndex] ?? null
+  const clearBatch = useCallback(() => { setBatch([]); setBatchIndex(0) }, [])
 
   const { page, receiptId } = route
 
@@ -242,49 +249,77 @@ export default function App() {
       setRoute(e.state?.page
         ? { page: e.state.page, receiptId: e.state.receiptId ?? null }
         : parseUrl(window.location.pathname))
-      setFreshResult(null)
+      clearBatch()
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [page, receiptId])
+  }, [page, receiptId, clearBatch])
 
   // Stamp state onto the initial history entry so popstate fires on first back
   useEffect(() => {
     window.history.replaceState({ page, receiptId }, '', window.location.pathname)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function openReceipt(id: number) { setFreshResult(null); navigate('review', id) }
+  function openReceipt(id: number) { clearBatch(); navigate('review', id) }
 
-  async function handleUploadSuccess(result: ProcessingResult) {
+  async function handleBatchSuccess(results: ProcessingResult[]) {
     setUploadOpen(false)
     shellRef.current?.closeSidebar()   // close mobile sidebar so review is visible
+    if (results.length === 0) return
 
-    // If OCR extracted both total and date, check for duplicates immediately
-    if (result.total != null && result.receipt_date) {
-      try {
-        const dupes = await checkDuplicates(result.total, result.receipt_date, result.receipt_id)
-        if (dupes.length > 0) {
-          const proceed = await showDupeWarning(dupes, 'Review Anyway')
-          if (!proceed) {
-            // Discard the newly created receipt
-            try { await deleteReceiptApi(result.receipt_id) } catch { /* ignore */ }
-            return
+    // For a single upload, run the eager duplicate check (and allow discarding
+    // the just-created receipt). For a batch we defer to per-receipt review —
+    // each is a `pending` row the user can delete during the review queue.
+    if (results.length === 1) {
+      const result = results[0]
+      if (result.total != null && result.receipt_date) {
+        try {
+          const dupes = await checkDuplicates(result.total, result.receipt_date, result.receipt_id)
+          if (dupes.length > 0) {
+            const proceed = await showDupeWarning(dupes, 'Review Anyway')
+            if (!proceed) {
+              try { await deleteReceiptApi(result.receipt_id) } catch { /* ignore */ }
+              return
+            }
           }
+        } catch {
+          // If the check fails, proceed normally
         }
-      } catch {
-        // If the check fails, proceed normally
       }
     }
 
-    setFreshResult(result)
-    navigate('review', result.receipt_id)
+    setBatch(results)
+    setBatchIndex(0)
+    navigate('review', results[0].receipt_id)
   }
 
-  function handleRescan() { setFreshResult(null); navigate('receipts'); setUploadOpen(true) }
+  /** Advance the review queue after Approve or Skip; return to the list when done. */
+  const handleAdvance = useCallback(() => {
+    const { index, done } = advanceBatch(batch.length, batchIndex)
+    if (done) {
+      clearBatch()
+      navigate('receipts', null, { skipGuard: true })
+    } else {
+      setBatchIndex(index)
+      navigate('review', batch[index].receipt_id, { skipGuard: true })
+    }
+  }, [batch, batchIndex, navigate, clearBatch])
 
+  // Skip (from the topbar during a batch) advances without saving.
+  useEffect(() => {
+    const handler = () => handleAdvance()
+    window.addEventListener('tabulate:skip-receipt', handler)
+    return () => window.removeEventListener('tabulate:skip-receipt', handler)
+  }, [handleAdvance])
+
+  function handleRescan() { clearBatch(); navigate('receipts'); setUploadOpen(true) }
+
+  const batchInfo = batchPosition(batch.length, batchIndex)
   const isReview    = page === 'review'
   const reviewTitle = isReview
-    ? (freshResult?.store_name ?? 'Receipt') + (freshResult?.receipt_date ? ` · ${freshResult.receipt_date}` : '')
+    ? (freshResult?.store_name ?? 'Receipt')
+      + (freshResult?.receipt_date ? ` · ${freshResult.receipt_date}` : '')
+      + (batchInfo ? ` · ${batchInfo.current} of ${batchInfo.total}` : '')
     : PAGE_TITLES[page]
 
   return (
@@ -292,7 +327,7 @@ export default function App() {
       <AppShell
         ref={shellRef}
         currentPage={page}
-        onNavigate={p => { setFreshResult(null); navigate(p) }}
+        onNavigate={p => { clearBatch(); navigate(p) }}
         onUpload={() => setUploadOpen(true)}
         topbarTitle={reviewTitle}
         embedded={!!INGRESS_PREFIX}
@@ -306,7 +341,11 @@ export default function App() {
           </button>
         ) : undefined}
         topbarRight={isReview ? (
-          <TopbarReceiptActions receiptId={receiptId} isFreshUpload={freshResult != null} />
+          <TopbarReceiptActions
+            receiptId={receiptId}
+            isFreshUpload={freshResult != null}
+            batchInfo={batchInfo}
+          />
         ) : !INGRESS_PREFIX ? (
           <button
             onClick={() => setUploadOpen(true)}
@@ -333,7 +372,7 @@ export default function App() {
             <ReviewLoader
               receiptId={receiptId}
               freshResult={freshResult}
-              onSaved={() => navigate('receipts', null, { skipGuard: true })}
+              onSaved={handleAdvance}
               onClose={() => navigate('receipts')}
               onRescan={handleRescan}
               onDupeWarning={showDupeWarning}
@@ -348,7 +387,7 @@ export default function App() {
       </AppShell>
 
       {uploadOpen && (
-        <UploadModal onClose={() => setUploadOpen(false)} onSuccess={handleUploadSuccess} />
+        <UploadModal onClose={() => setUploadOpen(false)} onBatchSuccess={handleBatchSuccess} />
       )}
 
       {dupeWarning && (
@@ -364,7 +403,11 @@ export default function App() {
 }
 
 // ── Topbar receipt actions ────────────────────────────────────────────────────
-function TopbarReceiptActions({ receiptId, isFreshUpload }: { receiptId: number | null; isFreshUpload: boolean }) {
+function TopbarReceiptActions({ receiptId, isFreshUpload, batchInfo }: {
+  receiptId: number | null
+  isFreshUpload: boolean
+  batchInfo: { current: number; total: number } | null
+}) {
   const [visible, setVisible]   = useState(false)
   const [dirty, setDirty]       = useState(false)
   const [verified, setVerified] = useState(false)
@@ -431,13 +474,23 @@ function TopbarReceiptActions({ receiptId, isFreshUpload }: { receiptId: number 
         <Save className="w-4 h-4" />
         Save
       </button>
+      {batchInfo && (
+        <button
+          className="hidden sm:flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg border transition-colors text-gray-700 bg-white border-gray-200 hover:bg-gray-50"
+          onClick={() => window.dispatchEvent(new CustomEvent('tabulate:skip-receipt'))}
+          title="Skip to next receipt (leaves it pending)"
+        >
+          <SkipForward className="w-4 h-4" />
+          Skip
+        </button>
+      )}
       {!verified && (
         <button
           className="hidden sm:flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg transition-colors text-white bg-green-600 hover:bg-green-700 shadow-sm shadow-green-600/30"
           onClick={() => window.dispatchEvent(new CustomEvent('tabulate:approve-receipt'))}
         >
           <CheckCircle className="w-4 h-4" />
-          Approve
+          {batchInfo ? 'Approve & Next' : 'Approve'}
         </button>
       )}
 
@@ -468,6 +521,15 @@ function TopbarReceiptActions({ receiptId, isFreshUpload }: { receiptId: number 
               <Save className="w-4 h-4" />
               Save
             </button>
+            {batchInfo && (
+              <button
+                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                onClick={() => { setMenuOpen(false); window.dispatchEvent(new CustomEvent('tabulate:skip-receipt')) }}
+              >
+                <SkipForward className="w-4 h-4" />
+                Skip to next
+              </button>
+            )}
             <button
               className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-red-500 hover:bg-red-50"
               onClick={() => { setMenuOpen(false); window.dispatchEvent(new CustomEvent('tabulate:delete-receipt')) }}

@@ -34,7 +34,7 @@ export function useReceipt(id: number | null) {
 export function useUploadReceipt() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, cropCorners }: { file: File; cropCorners?: CropCorners | null }) =>
+    mutationFn: ({ file, cropCorners }: { file: File | Blob; cropCorners?: CropCorners | null }) =>
       uploadReceipt(file, cropCorners),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: receiptKeys.list() })

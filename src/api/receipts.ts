@@ -26,11 +26,13 @@ export async function getReceipt(id: number): Promise<Receipt> {
 }
 
 export async function uploadReceipt(
-  file: File,
+  file: File | Blob,
   cropCorners?: [number, number][] | null,
 ): Promise<ProcessingResult> {
   const form = new FormData()
-  form.append('file', file)
+  // A client-side perspective-corrected scan arrives as a Blob (no name).
+  const filename = file instanceof File ? file.name : 'scan.jpg'
+  form.append('file', file, filename)
   if (cropCorners) {
     form.append('crop_corners', JSON.stringify(cropCorners))
   }
