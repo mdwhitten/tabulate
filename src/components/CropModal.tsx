@@ -2,26 +2,27 @@
  * CropModal — canvas-based receipt crop editor.
  *
  * Usage:
- *   <CropModal file={file} onConfirm={corners => ...} onSkip={() => ...} onCancel={() => ...} />
- *   <CropModal receiptId={id} onConfirm={corners => ...} onCancel={() => ...} />
+ *   <CropModal file={file} onConfirmImage={blob => ...} onSkip={() => ...} onCancel={() => ...} />
+ *   <CropModal receiptId={id} onConfirmImage={blob => ...} onCancel={() => ...} />
  *
  * - Pass `file` for new uploads (pre-upload crop).
- * - Pass `receiptId` for editing the crop of an existing receipt.
+ * - Pass `receiptId` to re-crop an existing receipt — loaded from the pristine
+ *   ORIGINAL image so a bad crop can always be redone from scratch.
  * - `onSkip` (optional) shown when `file` is provided — uploads without crop.
  *
  * Detection + correction run client-side via the vendored OpenCV.js + jscanify
- * scanner (real quad detection + perspective warp). For new uploads a corrected
- * JPEG is produced in-browser and returned through `onConfirmImage`. If the
- * scanner can't load we fall back to the server edge detector and the server's
- * axis-aligned crop (`onConfirm`).
+ * scanner (real quad detection + perspective warp). The result is always emitted
+ * as a JPEG blob through `onConfirmImage`. If the scanner can't load, corners are
+ * seeded by the server detector and the crop falls back to a plain axis-aligned
+ * canvas crop (no perspective correction).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import type { CropCorners } from '../api/receipts'
-import { detectEdges, detectEdgesRaw, receiptImageUrl } from '../api/receipts'
+import { detectEdgesRaw, receiptOriginalUrl } from '../api/receipts'
 import { loadScanner } from '../lib/opencv'
-import { detectCorners, extractCorrected } from '../lib/scanner'
+import { detectCorners, extractCorrected, cropToBlob } from '../lib/scanner'
 
 const HANDLE_R = 14   // corner handle radius, canvas px
 const MAX_W    = 600  // max canvas display width
@@ -33,21 +34,16 @@ type Corners = [Corner, Corner, Corner, Corner]  // TL, TR, BR, BL
 interface CropModalProps {
   /** For new uploads — the file to show and (optionally) skip */
   file?: File | null
-  /** For editing an existing receipt's crop */
+  /** For re-cropping an existing receipt (loaded from its pristine original) */
   receiptId?: number | null
-  /** Called with fractional corners when user clicks Apply (server-side crop) */
-  onConfirm: (corners: CropCorners) => void
-  /**
-   * Called (new uploads only) with a client-side perspective-corrected JPEG
-   * when the scanner is available. Preferred over `onConfirm` for `file` mode.
-   */
-  onConfirmImage?: (blob: Blob) => void
-  /** Called when user clicks Skip (new upload only, uploads without crop) */
+  /** Called with the cropped/perspective-corrected JPEG when the user clicks Apply */
+  onConfirmImage: (blob: Blob) => void
+  /** Called when user chooses "Use Full Image" on a new upload (uploads without crop) */
   onSkip?: () => void
   onCancel: () => void
 }
 
-export function CropModal({ file, receiptId, onConfirm, onConfirmImage, onSkip, onCancel }: CropModalProps) {
+export function CropModal({ file, receiptId, onConfirmImage, onSkip, onCancel }: CropModalProps) {
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const imgRef       = useRef<HTMLImageElement | null>(null)
   const scaleRef     = useRef(1)
@@ -142,12 +138,14 @@ export function CropModal({ file, receiptId, onConfirm, onConfirmImage, onSkip, 
       if (file) {
         imageUrl = URL.createObjectURL(file)
       } else if (receiptId != null) {
-        imageUrl = receiptImageUrl(receiptId)
+        // Re-crop from the pristine original, never the already-cropped image
+        imageUrl = receiptOriginalUrl(receiptId)
       } else {
         return
       }
 
       const img = new Image()
+      img.crossOrigin = 'anonymous'   // keep the canvas untainted so toBlob works
       img.src = imageUrl
 
       await new Promise<void>((resolve, reject) => {
@@ -179,8 +177,9 @@ export function CropModal({ file, receiptId, onConfirm, onConfirmImage, onSkip, 
         } catch {
           scannerReadyRef.current = false
         }
-        if (!scannerReadyRef.current) {
-          detected = file ? await detectEdgesRaw(file) : await detectEdges(receiptId!)
+        if (!scannerReadyRef.current && file) {
+          // Scanner unavailable: seed corners from the server detector (new uploads only)
+          detected = await detectEdgesRaw(file)
         }
         if (!cancelled && detected) {
           cornersRef.current = fracToCanvas(detected)
@@ -240,28 +239,44 @@ export function CropModal({ file, receiptId, onConfirm, onConfirmImage, onSkip, 
 
   // ── Confirm ───────────────────────────────────────────────────────────────
 
-  async function handleConfirm() {
+  /** Produce a JPEG blob for the current corners — perspective warp if the
+   *  scanner is available, otherwise a plain axis-aligned canvas crop. */
+  async function emitBlob(frac: CropCorners) {
+    const img = imgRef.current!
+    setApplying(true)
+    try {
+      let blob: Blob
+      if (scannerReadyRef.current) {
+        try {
+          blob = await extractCorrected(img, frac)
+        } catch {
+          blob = await cropToBlob(img, frac)   // warp failed → axis crop
+        }
+      } else {
+        blob = await cropToBlob(img, frac)
+      }
+      onConfirmImage(blob)
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  function handleConfirm() {
     const canvas = canvasRef.current!
-    const frac   = cornersRef.current.map(([x, y]) => [
+    const frac = cornersRef.current.map(([x, y]) => [
       x / canvas.width,
       y / canvas.height,
     ]) as CropCorners
+    void emitBlob(frac)
+  }
 
-    // New-upload path with the scanner available: perspective-correct in the
-    // browser and hand back a corrected JPEG (no server-side crop needed).
-    if (file && onConfirmImage && imgRef.current && scannerReadyRef.current) {
-      setApplying(true)
-      try {
-        const blob = await extractCorrected(imgRef.current, frac)
-        onConfirmImage(blob)
-        return
-      } catch {
-        // Fall back to server-side axis-aligned crop below.
-      } finally {
-        setApplying(false)
-      }
+  /** "Use Full Image": new uploads skip cropping; re-crops reset to the full original. */
+  function handleUseFull() {
+    if (receiptId != null) {
+      void emitBlob([[0, 0], [1, 0], [1, 1], [0, 1]])
+    } else {
+      onSkip?.()
     }
-    onConfirm(frac)
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -322,12 +337,13 @@ export function CropModal({ file, receiptId, onConfirm, onConfirmImage, onSkip, 
 
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100 shrink-0">
-          {onSkip ? (
+          {(onSkip || receiptId != null) ? (
             <button
-              onClick={onSkip}
-              className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+              onClick={handleUseFull}
+              disabled={applying}
+              className="text-sm text-gray-500 hover:text-gray-700 transition-colors disabled:opacity-50"
             >
-              Skip — Use Full Image
+              {receiptId != null ? 'Reset — Use Full Image' : 'Skip — Use Full Image'}
             </button>
           ) : (
             <div />
@@ -338,7 +354,7 @@ export function CropModal({ file, receiptId, onConfirm, onConfirmImage, onSkip, 
             className="flex items-center gap-2 px-4 py-2 bg-[#03a9f4] text-white text-sm font-semibold rounded-xl hover:bg-[#0290d1] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {applying && <Loader2 className="w-4 h-4 animate-spin" />}
-            Apply Crop &amp; Scan
+            {receiptId != null ? 'Apply Crop' : 'Apply Crop & Scan'}
           </button>
         </div>
       </div>

@@ -63,6 +63,11 @@ test.describe('Upload flow', () => {
     await expect(page.getByRole('button', { name: /Process 2 receipts/ })).toBeVisible()
     await page.getByRole('button', { name: /Process 2 receipts/ }).click()
 
+    // Each receipt steps through the crop modal (auto-detected corners pre-filled).
+    await expect(page.getByText('Crop Receipt')).toBeVisible()
+    await page.getByRole('button', { name: /Apply Crop/ }).click()   // receipt 1
+    await page.getByRole('button', { name: /Apply Crop/ }).click()   // receipt 2
+
     // Review opens on the first with an "n of m" indicator.
     await expect(page.getByText(/1 of 2/)).toBeVisible()
 

@@ -5,9 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { receiptKeys } from '../hooks/useReceipts'
 import { CropModal } from './CropModal'
 import { uploadReceipt } from '../api/receipts'
-import type { ProcessingResult, CropCorners } from '../api/receipts'
-import { loadScanner } from '../lib/opencv'
-import { extractCorrected } from '../lib/scanner'
+import type { ProcessingResult } from '../api/receipts'
 
 // ── Processing step indicator (single receipt) ────────────────────────────────
 
@@ -74,15 +72,6 @@ function isAcceptedFile(f: File): boolean {
   return f.type.startsWith('image/') || f.type === 'application/pdf'
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('Failed to load image'))
-    img.src = src
-  })
-}
-
 interface UploadModalProps {
   onClose: () => void
   /** Called with the ordered batch of processed receipts (one or many). */
@@ -142,52 +131,30 @@ export function UploadModal({ onClose, onBatchSuccess }: UploadModalProps) {
     e.target.value = ''   // reset so the same file can be re-selected
   }, [addFiles])
 
-  // ── Upload a single receipt (from the crop step or a lone PDF) ─────────────
+  // ── Crop stepping + parallel upload ─────────────────────────────────────────
+  // Each image is reviewed in the crop modal (auto-detected corners pre-filled);
+  // PDFs upload as-is. Collected results are then uploaded in parallel, sending
+  // the original alongside each corrected scan so the crop stays reversible.
 
-  const uploadOne = useCallback(async (payload: File | Blob, cropCorners?: CropCorners | null) => {
-    setStage('uploading')
-    setError(null)
-    try {
-      const result = await uploadReceipt(payload, cropCorners)
-      qc.invalidateQueries({ queryKey: receiptKeys.list() })
-      onBatchSuccess([result])
-    } catch (e) {
-      setError((e as Error).message)
-      setStage('pick')
-    }
-  }, [qc, onBatchSuccess])
+  const [cropIndex, setCropIndex] = useState(0)
+  const [imageIdx, setImageIdx]   = useState<number[]>([])   // queue positions that need a crop step
+  const resultsRef = useRef<({ payload: File | Blob; original: File | null } | null)[]>([])
 
-  // ── Process a whole batch in parallel (skip manual crop) ───────────────────
-
-  const processBatch = useCallback(async () => {
+  const uploadAll = useCallback(async () => {
     setStage('uploading')
     setError(null)
     setDone(0)
-
-    // Try to bring up the client scanner once; if it fails we upload originals.
-    let scannerOk = true
-    try { await loadScanner() } catch { scannerOk = false }
-
+    const prepared = resultsRef.current.map(r => r!)
     const settled = await Promise.allSettled(
-      queue.map(async item => {
-        let payload: File | Blob = item.file
-        if (scannerOk && !item.isPdf) {
-          try {
-            const img = await loadImage(item.url)
-            payload = await extractCorrected(img)   // auto-detect + perspective-correct
-          } catch { /* fall back to the original image */ }
-        }
-        const result = await uploadReceipt(payload)
+      prepared.map(async r => {
+        const result = await uploadReceipt(r.payload, null, r.original)
         setDone(d => d + 1)
         return result
       }),
     )
-
     const results = settled
       .filter((s): s is PromiseFulfilledResult<ProcessingResult> => s.status === 'fulfilled')
       .map(s => s.value)
-    const failed = settled.length - results.length
-
     qc.invalidateQueries({ queryKey: receiptKeys.list() })
 
     if (results.length === 0) {
@@ -195,37 +162,44 @@ export function UploadModal({ onClose, onBatchSuccess }: UploadModalProps) {
       setStage('pick')
       return
     }
-    if (failed > 0) {
-      // Some succeeded — proceed with those but let the user know.
-      console.warn(`${failed} of ${settled.length} receipts failed to upload`)
+    if (results.length < prepared.length) {
+      console.warn(`${prepared.length - results.length} of ${prepared.length} receipts failed to upload`)
     }
     onBatchSuccess(results)
-  }, [queue, qc, onBatchSuccess])
-
-  // ── Process button: 1 image → crop; 1 PDF → upload; many → batch ───────────
+  }, [qc, onBatchSuccess])
 
   const handleProcess = useCallback(() => {
     if (queue.length === 0) return
-    if (queue.length === 1) {
-      const only = queue[0]
-      if (only.isPdf) uploadOne(only.file, null)   // digital doc — no crop
-      else setStage('crop')
-      return
+    // Pre-resolve PDFs (no crop); collect image positions for the crop walkthrough.
+    resultsRef.current = queue.map(it => (it.isPdf ? { payload: it.file, original: null } : null))
+    const images = queue.map((it, i) => (it.isPdf ? -1 : i)).filter(i => i >= 0)
+    setImageIdx(images)
+    if (images.length === 0) {
+      void uploadAll()   // all PDFs
+    } else {
+      setCropIndex(0)
+      setStage('crop')
     }
-    processBatch()
-  }, [queue, uploadOne, processBatch])
+  }, [queue, uploadAll])
 
-  // ── Crop stage (single image) ──────────────────────────────────────────────
+  const recordCrop = useCallback((payload: File | Blob, original: File | null) => {
+    resultsRef.current[imageIdx[cropIndex]] = { payload, original }
+    if (cropIndex + 1 >= imageIdx.length) void uploadAll()
+    else setCropIndex(cropIndex + 1)
+  }, [cropIndex, imageIdx, uploadAll])
 
-  if (stage === 'crop' && queue.length === 1) {
-    const only = queue[0]
+  // ── Crop stage: step through each image (pre-filled corners) ────────────────
+
+  if (stage === 'crop') {
+    const item = queue[imageIdx[cropIndex]]
+    if (!item) return null
     return (
       <CropModal
-        file={only.file}
-        onConfirmImage={blob => uploadOne(blob, null)}
-        onConfirm={corners => uploadOne(only.file, corners)}
-        onSkip={() => uploadOne(only.file, null)}
-        onCancel={() => setStage('pick')}
+        key={item.id}
+        file={item.file}
+        onConfirmImage={blob => recordCrop(blob, item.file)}
+        onSkip={() => recordCrop(item.file, null)}
+        onCancel={() => { setStage('pick'); setCropIndex(0) }}
       />
     )
   }

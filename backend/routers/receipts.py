@@ -88,12 +88,16 @@ async def upload_receipt(
     file: UploadFile = File(...),
     store_name_hint: Optional[str] = Form(None),
     crop_corners: Optional[str] = Form(None),   # JSON [[x,y],[x,y],[x,y],[x,y]] as 0–1 fractions
+    original: Optional[UploadFile] = File(None),  # pristine pre-crop image, when the client already perspective-corrected `file`
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """
     Accept an image upload, run OCR, parse, verify total, categorize items.
     Returns a ProcessingResult for the review screen — nothing is saved to DB yet.
     If crop_corners is provided (4 [x,y] fraction pairs), the image is cropped first.
+    When the client has already perspective-corrected the receipt, it sends the
+    corrected image as `file` and the raw image as `original` so the crop can be
+    redone later from the pristine source.
     """
     import json as _json
     from PIL import Image as _PILImage, ImageOps as _ImageOps
@@ -212,6 +216,27 @@ async def upload_receipt(
     thumb_path = os.path.join(IMAGE_DIR, thumb_filename)
     thumbnail_path = generate_thumbnail(contents, thumb_path)
 
+    # If the client perspective-corrected the receipt, it also sends the pristine
+    # pre-crop image so the crop can be redone from the original later. Store it
+    # separately; when absent, image_path *is* the original (original_path stays null).
+    original_path = None
+    if original is not None:
+        try:
+            orig_bytes = await original.read(_MAX_UPLOAD_BYTES + 1)
+            if 0 < len(orig_bytes) <= _MAX_UPLOAD_BYTES:
+                _oimg = _PILImage.open(_io.BytesIO(orig_bytes))
+                _oimg = _ImageOps.exif_transpose(_oimg)
+                if _oimg.mode not in ("RGB", "L"):
+                    _oimg = _oimg.convert("RGB")
+                _obuf = _io.BytesIO()
+                _oimg.save(_obuf, format="JPEG", quality=92, optimize=True)
+                original_path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
+                with open(original_path, "wb") as f:
+                    f.write(_obuf.getvalue())
+        except Exception as e:
+            logger.warning("Failed to store original image, continuing without it: %s", e)
+            original_path = None
+
     # Text extraction — use embedded PDF text when available, fall back to Tesseract OCR
     if pdf_text:
         ocr_text = pdf_text
@@ -240,10 +265,10 @@ async def upload_receipt(
     # Persist receipt (status = 'pending' until user saves)
     cursor = await db.execute(
         """INSERT INTO receipts
-           (store_name, receipt_date, image_path, thumbnail_path, ocr_raw,
+           (store_name, receipt_date, image_path, original_path, thumbnail_path, ocr_raw,
             subtotal, tax, discounts, total, total_verified, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
-        (store, parsed.receipt_date, image_path, thumbnail_path, ocr_text,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+        (store, parsed.receipt_date, image_path, original_path, thumbnail_path, ocr_text,
          parsed.subtotal, parsed.tax, parsed.discounts, parsed.total,
          1 if verified else 0),
     )
@@ -678,14 +703,14 @@ async def delete_receipt(
     db: aiosqlite.Connection = Depends(get_db),
 ):
     async with db.execute(
-        "SELECT image_path, thumbnail_path FROM receipts WHERE id = ?", (receipt_id,)
+        "SELECT image_path, original_path, thumbnail_path FROM receipts WHERE id = ?", (receipt_id,)
     ) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Receipt not found")
 
-    # Remove image files (full + thumbnail)
-    for path_key in ("image_path", "thumbnail_path"):
+    # Remove image files (full + original + thumbnail)
+    for path_key in ("image_path", "original_path", "thumbnail_path"):
         try:
             p = row[path_key]
             if p and os.path.exists(p):
@@ -701,7 +726,7 @@ async def delete_receipt(
 
 # ── Image Serving ─────────────────────────────────────────────────────────────
 
-_ALLOWED_IMAGE_FIELDS = frozenset({"image_path", "thumbnail_path"})
+_ALLOWED_IMAGE_FIELDS = frozenset({"image_path", "original_path", "thumbnail_path"})
 
 async def _get_image_path(receipt_id: int, db: aiosqlite.Connection, field: str) -> str:
     if field not in _ALLOWED_IMAGE_FIELDS:
@@ -730,6 +755,32 @@ async def get_receipt_image(
 ):
     """Serve the original receipt image file."""
     path = await _get_image_path(receipt_id, db, "image_path")
+    return FileResponse(path, media_type="image/jpeg", headers={
+        "Cache-Control": "public, max-age=86400",
+    })
+
+
+@router.get("/{receipt_id}/original")
+async def get_receipt_original(
+    receipt_id: int,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Serve the pristine pre-crop image (falls back to image_path when there is no separate original)."""
+    async with db.execute(
+        "SELECT image_path, original_path FROM receipts WHERE id = ?", (receipt_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+
+    path = row["original_path"] or row["image_path"]
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Image file not found")
+    real_path = os.path.realpath(path)
+    real_image_dir = os.path.realpath(IMAGE_DIR)
+    if not real_path.startswith(real_image_dir + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     return FileResponse(path, media_type="image/jpeg", headers={
         "Cache-Control": "public, max-age=86400",
     })
@@ -801,80 +852,75 @@ async def receipt_detect_edges(
     return {"corners": corners}
 
 
-class CropBody(BaseModel):
-    corners: list[list[float]]
-
-@router.post("/{receipt_id}/crop")
-async def crop_receipt_image(
+@router.post("/{receipt_id}/replace-image")
+async def replace_receipt_image(
     receipt_id: int,
-    body: CropBody,
+    file: UploadFile = File(...),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """
-    Apply a user-confirmed crop to the receipt image.
-    Body: { "corners": [[x0,y0],[x1,y1],[x2,y2],[x3,y3]] }
-    Corners are fractions (0–1) of the original image dimensions.
-    Replaces image_path + thumbnail_path in-place.
+    Replace a receipt's displayed/OCR'd image with a new (client re-cropped &
+    perspective-corrected) image, keeping the pristine original for future edits.
+
+    The crop is redone client-side from the original, so this endpoint just
+    stores the new bytes and regenerates the thumbnail. If the receipt has no
+    separate original yet, the current image is preserved as the original before
+    it's overwritten — so the first re-crop is still reversible.
     """
     from services.image_service import generate_thumbnail
-    from PIL import Image as PILImage
+    from PIL import Image as PILImage, ImageOps as _ImageOps2
     import io as _io
 
-    corners = body.corners
-    if len(corners) != 4 or not all(len(c) == 2 for c in corners):
-        raise HTTPException(status_code=422, detail="Provide exactly 4 corners as [x,y] pairs")
+    _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+    contents = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if not contents:
+        raise HTTPException(status_code=422, detail="Empty image")
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
 
-    path = await _get_image_path(receipt_id, db, "image_path")
-    with open(path, "rb") as f:
-        original_bytes = f.read()
+    async with db.execute(
+        "SELECT image_path, original_path, thumbnail_path FROM receipts WHERE id = ?", (receipt_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+
+    image_path = row["image_path"]
+    if not image_path:
+        raise HTTPException(status_code=404, detail="Receipt has no image")
 
     try:
-        from PIL import ImageOps as _ImageOps2
-        img = PILImage.open(_io.BytesIO(original_bytes))
-        img = _ImageOps2.exif_transpose(img)  # fix phone EXIF rotation
+        img = PILImage.open(_io.BytesIO(contents))
+        img = _ImageOps2.exif_transpose(img)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-        w, h = img.size
-
-        # Convert fractional corners → pixel coords
-        px_corners = [(c[0] * w, c[1] * h) for c in corners]
-        tl, tr, br, bl = px_corners
-
-        # Simple axis-aligned crop (bounding box of the four points)
-        x_min = max(0, int(min(tl[0], bl[0])))
-        x_max = min(w, int(max(tr[0], br[0])))
-        y_min = max(0, int(min(tl[1], tr[1])))
-        y_max = min(h, int(max(bl[1], br[1])))
-
-        if x_max <= x_min or y_max <= y_min:
-            raise HTTPException(status_code=422, detail="Invalid crop region")
-
-        cropped = img.crop((x_min, y_min, x_max, y_max))
-
-        # Overwrite original file
         buf = _io.BytesIO()
-        cropped.save(buf, format="JPEG", quality=90, optimize=True)
-        cropped_bytes = buf.getvalue()
-        with open(path, "wb") as f:
-            f.write(cropped_bytes)
+        img.save(buf, format="JPEG", quality=92, optimize=True)
+        new_bytes = buf.getvalue()
+
+        # Preserve the pristine original before the first destructive re-crop.
+        original_path = row["original_path"]
+        if not original_path and os.path.exists(image_path):
+            original_path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
+            shutil.copyfile(image_path, original_path)
+
+        # Overwrite the displayed image in place (URL stays stable; client cache-busts)
+        with open(image_path, "wb") as f:
+            f.write(new_bytes)
 
         # Regenerate thumbnail
-        async with db.execute(
-            "SELECT thumbnail_path FROM receipts WHERE id = ?", (receipt_id,)
-        ) as cur:
-            row = await cur.fetchone()
-        old_thumb = row["thumbnail_path"] if row else None
+        old_thumb = row["thumbnail_path"]
         thumb_path = old_thumb or os.path.join(IMAGE_DIR, f"thumb_{uuid.uuid4()}.jpg")
-        new_thumb = generate_thumbnail(cropped_bytes, thumb_path)
+        new_thumb = generate_thumbnail(new_bytes, thumb_path)
 
         await db.execute(
-            "UPDATE receipts SET thumbnail_path = ? WHERE id = ?",
-            (new_thumb, receipt_id),
+            "UPDATE receipts SET original_path = ?, thumbnail_path = ? WHERE id = ?",
+            (original_path, new_thumb, receipt_id),
         )
         await db.commit()
 
-        return {"status": "cropped", "thumbnail_path": new_thumb}
+        return {"status": "replaced", "thumbnail_path": new_thumb}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Crop failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Image replace failed: {e}")

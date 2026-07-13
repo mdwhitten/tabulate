@@ -28,6 +28,7 @@ export async function getReceipt(id: number): Promise<Receipt> {
 export async function uploadReceipt(
   file: File | Blob,
   cropCorners?: [number, number][] | null,
+  original?: File | Blob | null,
 ): Promise<ProcessingResult> {
   const form = new FormData()
   // A client-side perspective-corrected scan arrives as a Blob (no name).
@@ -35,6 +36,11 @@ export async function uploadReceipt(
   form.append('file', file, filename)
   if (cropCorners) {
     form.append('crop_corners', JSON.stringify(cropCorners))
+  }
+  // When `file` is a client-corrected scan, also send the pristine original so
+  // the crop can be redone from it later.
+  if (original) {
+    form.append('original', original, original instanceof File ? original.name : 'original.jpg')
   }
   const res = await fetch(apiUrl('/receipts/upload'), { method: 'POST', body: form })
   if (!res.ok) {
@@ -91,6 +97,11 @@ export function receiptImageUrl(id: number): string {
   return apiUrl(`/receipts/${id}/image`)
 }
 
+/** URL of the pristine pre-crop image (falls back to the displayed image server-side). */
+export function receiptOriginalUrl(id: number): string {
+  return apiUrl(`/receipts/${id}/original`)
+}
+
 // ── Crop / Edge detection ──────────────────────────────────────────────────
 
 export type CropCorners = [[number, number], [number, number], [number, number], [number, number]]
@@ -113,20 +124,25 @@ export async function detectEdges(receiptId: number): Promise<CropCorners | null
   return data.corners ?? null
 }
 
-/** Apply a crop to an existing receipt (overwrites image + thumbnail). */
-export async function cropReceipt(
+/**
+ * Replace an existing receipt's displayed/OCR'd image with a client re-cropped &
+ * perspective-corrected image. The server keeps the pristine original so the crop
+ * stays reversible.
+ */
+export async function replaceReceiptImage(
   receiptId: number,
-  corners: CropCorners,
+  image: Blob,
 ): Promise<{ status: string; thumbnail_path: string }> {
-  const res = await fetch(apiUrl(`/receipts/${receiptId}/crop`), {
+  const form = new FormData()
+  form.append('file', image, 'scan.jpg')
+  const res = await fetch(apiUrl(`/receipts/${receiptId}/replace-image`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ corners }),
+    body: form,
   })
   if (!res.ok) {
     let detail = res.statusText
     try { const b = await res.json(); detail = b.detail ?? detail } catch { /* ignore */ }
-    throw new Error(`Crop failed: ${detail}`)
+    throw new Error(`Image replace failed: ${detail}`)
   }
   return res.json()
 }

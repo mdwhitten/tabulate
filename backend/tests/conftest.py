@@ -46,6 +46,7 @@ CREATE TABLE receipts (
     receipt_date    TEXT,
     scanned_at      TEXT DEFAULT (datetime('now')),
     image_path      TEXT,
+    original_path   TEXT,
     thumbnail_path  TEXT,
     ocr_raw         TEXT,
     subtotal        REAL,

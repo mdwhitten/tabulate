@@ -27,6 +27,11 @@ async def init_db():
                 "ALTER TABLE receipts ADD COLUMN thumbnail_path TEXT"
             )
             logger.info("Migration: added receipts.thumbnail_path")
+        if "original_path" not in cols:
+            await db.execute(
+                "ALTER TABLE receipts ADD COLUMN original_path TEXT"
+            )
+            logger.info("Migration: added receipts.original_path")
         # categories.is_disabled (added after initial schema)
         async with db.execute("PRAGMA table_info(categories)") as cur:
             cat_cols = {row[1] async for row in cur}
@@ -90,7 +95,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     store_name      TEXT NOT NULL,         -- denormalized for convenience
     receipt_date    TEXT,                  -- ISO date from receipt
     scanned_at      TEXT DEFAULT (datetime('now')),
-    image_path      TEXT,                  -- path to stored image file
+    image_path      TEXT,                  -- path to displayed/OCR'd image (perspective-corrected if scanned)
+    original_path   TEXT,                  -- path to the pristine uploaded image (for re-cropping); null if image_path is already the original
     thumbnail_path  TEXT,                  -- path to compressed thumbnail (generated on upload)
     ocr_raw         TEXT,                  -- raw OCR output
     subtotal        REAL,
