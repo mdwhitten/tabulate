@@ -51,7 +51,8 @@ test.describe('Upload flow', () => {
     await mockUploadFlow(page)
     await page.goto('/')
 
-    await page.getByRole('button', { name: 'Scan Receipt' }).click()
+    // "Scan Receipt" matches both the sidebar button and the topbar action.
+    await page.getByRole('button', { name: 'Scan Receipt' }).first().click()
 
     // Queue two images.
     await page.locator('input[type="file"][multiple]').setInputFiles([
@@ -65,12 +66,14 @@ test.describe('Upload flow', () => {
     // Review opens on the first with an "n of m" indicator.
     await expect(page.getByText(/1 of 2/)).toBeVisible()
 
-    // Approve advances to the next in the queue.
-    await page.getByRole('button', { name: /Approve/ }).click()
+    // Approve advances to the next in the queue (footer button, exact match to
+    // avoid the topbar "Approve & Next").
+    const approve = () => page.getByRole('button', { name: 'Approve', exact: true }).first()
+    await approve().click()
     await expect(page.getByText(/2 of 2/)).toBeVisible()
 
     // Final approve returns to the receipts list.
-    await page.getByRole('button', { name: /Approve/ }).click()
+    await approve().click()
     await expect(page).toHaveURL(/\/receipts$/)
   })
 
@@ -78,7 +81,7 @@ test.describe('Upload flow', () => {
     await mockUploadFlow(page)
     await page.goto('/')
 
-    await page.getByRole('button', { name: 'Scan Receipt' }).click()
+    await page.getByRole('button', { name: 'Scan Receipt' }).first().click()
 
     await page.locator('input[type="file"][multiple]').setInputFiles([
       { name: 'only.png', mimeType: 'image/png', buffer: PNG },
@@ -90,7 +93,7 @@ test.describe('Upload flow', () => {
     await page.getByRole('button', { name: /Skip — Use Full Image/ }).click()
 
     // Lands on review with no batch indicator.
-    await expect(page.getByRole('button', { name: /Approve/ })).toBeVisible()
-    await expect(page.getByText(/of \d+$/)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
+    await expect(page.getByText(/\d+ of \d+/)).toHaveCount(0)
   })
 })
