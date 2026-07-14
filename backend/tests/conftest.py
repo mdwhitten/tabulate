@@ -54,7 +54,10 @@ CREATE TABLE receipts (
     discounts       REAL DEFAULT 0,
     total           REAL,
     total_verified  INTEGER DEFAULT 0,
-    status          TEXT DEFAULT 'pending'
+    status          TEXT DEFAULT 'pending',
+    ynab_transaction_id TEXT,
+    ynab_sync_status    TEXT,
+    ynab_synced_at      TEXT
 );
 
 CREATE TABLE line_items (
@@ -89,6 +92,16 @@ CREATE TABLE monthly_summary (
     total       REAL NOT NULL,
     updated_at  TEXT DEFAULT (datetime('now')),
     UNIQUE(year, month, category)
+);
+
+CREATE TABLE app_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT
+);
+
+CREATE TABLE ynab_category_map (
+    category_id      INTEGER PRIMARY KEY REFERENCES categories(id) ON DELETE CASCADE,
+    ynab_category_id TEXT NOT NULL
 );
 """
 

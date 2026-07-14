@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle, Pencil } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle, Pencil, Loader2, RefreshCw } from 'lucide-react'
 import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
@@ -10,8 +10,29 @@ import { ReceiptPreview } from '../components/ReceiptPreview'
 import { CropModal } from '../components/CropModal'
 import { replaceReceiptImage } from '../api/receipts'
 import { useRecategorize } from '../hooks/useReceipts'
+import { useYnabStatus, useSyncReceiptToYnab } from '../hooks/useYnab'
 import { fmt } from '../lib/utils'
 import { reviewReducer, isDirty as computeIsDirty } from './reviewReducer'
+
+// ── YNAB sync status pill ──────────────────────────────────────────────────────
+
+function YnabSyncStatus({ status, reason, error }: { status: string | null; reason?: string; error?: boolean }) {
+  if (error) {
+    return <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Sync failed</span>
+  }
+  switch (status) {
+    case 'syncing':
+      return <span className="text-xs text-gray-500 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing…</span>
+    case 'synced':
+      return <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Synced</span>
+    case 'failed':
+      return <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Failed</span>
+    case 'skipped':
+      return <span className="text-xs text-gray-500">{reason || 'Skipped'}</span>
+    default:
+      return <span className="text-xs text-gray-400">Not synced yet</span>
+  }
+}
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +58,10 @@ export function ReviewReceipt({
   const isVerified = receipt.status === 'verified'
   const [isEditing, setIsEditing] = useState(false)
   const isLocked = isVerified && !isEditing
+
+  const { data: ynabStatus } = useYnabStatus()
+  const syncMut = useSyncReceiptToYnab()
+  const ynabEnabled = ynabStatus?.enabled ?? false
 
   const [state, dispatch] = useReducer(reviewReducer, {
     items:               receipt.items,
@@ -366,6 +391,28 @@ export function ReviewReceipt({
               <span className="text-xs text-red-500 whitespace-nowrap">Required</span>
             )}
           </div>
+
+          {/* YNAB sync row — only when integration is enabled and receipt is verified */}
+          {ynabEnabled && isVerified && (
+            <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-b-gray-100 bg-gray-50">
+              <span className="text-xs font-mono text-gray-500 whitespace-nowrap">YNAB:</span>
+              <YnabSyncStatus
+                status={syncMut.isPending ? 'syncing' : (syncMut.data?.status ?? receipt.ynab_sync_status ?? null)}
+                reason={syncMut.data?.reason}
+                error={syncMut.isError}
+              />
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={() => syncMut.mutate(receipt.id)}
+                disabled={syncMut.isPending}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                {syncMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                {receipt.ynab_transaction_id ? 'Re-sync' : 'Sync to YNAB'}
+              </button>
+            </div>
+          )}
 
           {/* Items table */}
           <div className="flex-1 overflow-auto">

@@ -84,6 +84,43 @@ export const MAPPINGS = {
   total: 5,
 }
 
+// ── YNAB integration mocks ──────────────────────────────────────────────────
+
+export const YNAB_STATUS = {
+  enabled: true,
+  token_present: true,
+  budget_id: 'budget-1',
+  account_id: 'account-1',
+  default_category_id: 'ycat-default',
+  configured: true,
+}
+
+export const YNAB_CONFIG = {
+  ...YNAB_STATUS,
+  mappings: [{ category_id: 1, ynab_category_id: 'ycat-groceries' }],
+}
+
+export const YNAB_BUDGETS = [
+  { id: 'budget-1', name: 'My Budget' },
+  { id: 'budget-2', name: 'Household' },
+]
+
+export const YNAB_ACCOUNTS = [
+  { id: 'account-1', name: 'Checking', closed: false },
+  { id: 'account-2', name: 'Credit Card', closed: false },
+]
+
+export const YNAB_CATEGORY_GROUPS = [
+  { id: 'g1', name: 'Monthly Bills', categories: [
+    { id: 'ycat-default', name: 'Groceries (default)' },
+    { id: 'ycat-groceries', name: 'Groceries' },
+  ] },
+  { id: 'g2', name: 'Everyday Expenses', categories: [
+    { id: 'ycat-dining', name: 'Dining Out' },
+    { id: 'ycat-household', name: 'Household Goods' },
+  ] },
+]
+
 // ── Types (mirror frontend just for mock typing) ────────────────────────────
 
 interface ReceiptSummary {
@@ -173,6 +210,29 @@ export async function mockAllApis(page: Page) {
   // Health check
   await page.route('**/api/health', route =>
     route.fulfill({ json: { status: 'ok' } }),
+  )
+
+  // ── YNAB integration ──────────────────────────────────────────────────────
+  await page.route('**/api/ynab/status', route =>
+    route.fulfill({ json: YNAB_STATUS }),
+  )
+  await page.route(/\/api\/ynab\/config$/, route => {
+    if (route.request().method() === 'PUT') {
+      return route.fulfill({ json: YNAB_CONFIG })
+    }
+    return route.fulfill({ json: YNAB_CONFIG })
+  })
+  await page.route('**/api/ynab/budgets', route =>
+    route.fulfill({ json: YNAB_BUDGETS }),
+  )
+  await page.route(/\/api\/ynab\/budgets\/[^/]+\/accounts$/, route =>
+    route.fulfill({ json: YNAB_ACCOUNTS }),
+  )
+  await page.route(/\/api\/ynab\/budgets\/[^/]+\/categories$/, route =>
+    route.fulfill({ json: YNAB_CATEGORY_GROUPS }),
+  )
+  await page.route(/\/api\/ynab\/receipts\/\d+\/sync$/, route =>
+    route.fulfill({ json: { status: 'synced', transaction_id: 'txn-1' } }),
   )
 }
 

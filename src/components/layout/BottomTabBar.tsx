@@ -44,6 +44,7 @@ const TAB_GROUPS: TabGroup[] = [
     pages: [
       { id: 'categories', label: 'Categories',   icon: <Tag      className="w-4 h-4" /> },
       { id: 'learned',    label: 'Learned Items', icon: <BookOpen className="w-4 h-4" /> },
+      { id: 'settings',   label: 'Settings',      icon: <Settings className="w-4 h-4" /> },
     ],
   },
 ]

@@ -7,6 +7,7 @@ import { ReviewReceipt } from './pages/ReviewReceipt'
 import { Trends } from './pages/Trends'
 import { Categories } from './pages/Categories'
 import { LearnedItems } from './pages/LearnedItems'
+import { Settings } from './pages/Settings'
 import { UploadModal } from './components/UploadModal'
 import { DuplicateWarningModal } from './components/DuplicateWarningModal'
 import { useReceipt } from './hooks/useReceipts'
@@ -45,7 +46,7 @@ function parseUrl(fullPath: string): RouteState {
   if (reviewMatch) return { page: 'review', receiptId: Number(reviewMatch[1]) }
   const map: Record<string, Page> = {
     '/': 'dashboard', '/receipts': 'receipts', '/trends': 'trends',
-    '/categories': 'categories', '/learned': 'learned',
+    '/categories': 'categories', '/learned': 'learned', '/settings': 'settings',
   }
   return { page: map[path] ?? 'dashboard', receiptId: null }
 }
@@ -59,6 +60,7 @@ function pageToPath(page: Page, receiptId?: number | null): string {
     const map: Record<Page, string> = {
       dashboard: '/', receipts: '/receipts', trends: '/trends',
       categories: '/categories', learned: '/learned', review: '/receipts',
+      settings: '/settings',
     }
     rel = map[page]
   }
@@ -72,6 +74,7 @@ const PAGE_TITLES: Record<Page, string> = {
   categories: 'Categories',
   learned:    'Learned Items',
   review:     'Review Receipt',
+  settings:   'Settings',
 }
 
 // ── Duplicate warning state ───────────────────────────────────────────────────
@@ -382,6 +385,7 @@ export default function App() {
           {page === 'trends'     && <Trends />}
           {page === 'categories' && <Categories />}
           {page === 'learned'    && <LearnedItems />}
+          {page === 'settings'   && <Settings />}
 
         </div>
       </AppShell>

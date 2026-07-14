@@ -31,6 +31,8 @@ export interface Receipt {
   ocr_raw: string | null
   image_path: string | null
   thumbnail_path: string | null
+  ynab_sync_status: string | null
+  ynab_transaction_id: string | null
   items: LineItem[]
 }
 
@@ -42,6 +44,7 @@ export interface ReceiptSummary {
   status: 'pending' | 'review' | 'verified'
   total: number | null
   item_count: number
+  ynab_sync_status?: string | null
 }
 
 export interface MonthSummary {
@@ -102,4 +105,60 @@ export interface DuplicateMatch {
   status: string
 }
 
-export type Page = 'dashboard' | 'receipts' | 'trends' | 'categories' | 'learned' | 'review'
+export type Page = 'dashboard' | 'receipts' | 'trends' | 'categories' | 'learned' | 'review' | 'settings'
+
+// ── YNAB integration ──────────────────────────────────────────────────────────
+export interface YnabStatus {
+  enabled: boolean
+  token_present: boolean
+  budget_id: string | null
+  account_id: string | null
+  default_category_id: string | null
+  configured: boolean
+}
+
+export interface YnabCategoryMapping {
+  category_id: number
+  ynab_category_id: string
+}
+
+export interface YnabConfig extends YnabStatus {
+  mappings: YnabCategoryMapping[]
+}
+
+export interface YnabConfigBody {
+  enabled: boolean
+  budget_id: string | null
+  account_id: string | null
+  default_category_id: string | null
+  mappings: YnabCategoryMapping[]
+}
+
+export interface YnabBudget {
+  id: string
+  name: string
+}
+
+export interface YnabAccount {
+  id: string
+  name: string
+  closed: boolean
+}
+
+export interface YnabCategory {
+  id: string
+  name: string
+}
+
+export interface YnabCategoryGroup {
+  id: string
+  name: string
+  categories: YnabCategory[]
+}
+
+export interface YnabSyncResult {
+  status: 'synced' | 'skipped' | 'failed'
+  reason?: string
+  transaction_id?: string
+  split?: boolean
+}
