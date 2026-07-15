@@ -9,9 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **YNAB integration** — optionally sync approved receipts to YNAB as transactions. Disabled by default and gated on a `YNAB_API_TOKEN` env var; when off or on error it never blocks or fails a receipt save.
-  - New **Settings** page: connection status, enable toggle, budget/account/default-category selectors, and an optional per-category mapping from Tabulate categories to YNAB categories.
+  - New **Settings** page: connection status, enable toggle, budget/account/default-category selectors (searchable dropdowns), and an optional per-category mapping from Tabulate categories to YNAB categories.
   - On approval (and via a manual "Sync to YNAB" / re-sync button on verified receipts), a transaction is created for the receipt total. When a receipt spans multiple mapped categories the transaction is split, with the tax/discount remainder reconciled into the default category so the parts sum to the real charge.
+  - Editing and saving an already-verified receipt re-syncs it automatically, so YNAB stays current without a manual re-sync.
   - Transactions are created unapproved and uncleared with no `import_id`, so YNAB automatically matches them to the bank feed when the real charge imports later.
+- Added `.env.example` and documented `YNAB_API_TOKEN`, `LOG_LEVEL`, and `CORS_ORIGINS` in the README.
+
+### Fixed
+- Manual total entry: typing a multi-digit total (e.g. "300") no longer commits the first digit and clears the field — the value is now committed on blur/Enter.
+- The receipt store-name field now shows a clear hover/focus affordance (and a pencil icon) so it reads as editable.
 
 ## [1.6.0] - 2026-07-13
 

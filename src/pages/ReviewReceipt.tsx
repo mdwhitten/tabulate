@@ -335,13 +335,20 @@ export function ReviewReceipt({
                     {storeName || 'Unknown Store'}
                   </h2>
                 ) : (
-                  <input
-                    type="text"
-                    value={storeName}
-                    onChange={e => setStoreName(e.target.value)}
-                    placeholder="Store name"
-                    className="text-lg font-semibold text-gray-900 leading-tight bg-transparent border-none outline-none focus:ring-0 w-full truncate"
-                  />
+                  <div className="relative flex-1 min-w-0 group/store">
+                    <input
+                      type="text"
+                      value={storeName}
+                      onChange={e => setStoreName(e.target.value)}
+                      placeholder="Store name"
+                      title="Click to edit store name"
+                      className="text-lg font-semibold text-gray-900 leading-tight w-full truncate cursor-text
+                                 bg-transparent rounded-md pl-2 pr-7 py-0.5 -ml-2 border border-transparent transition-colors
+                                 hover:border-gray-200 hover:bg-gray-50
+                                 focus:bg-white focus:border-[#03a9f4] focus:ring-2 focus:ring-[#03a9f4]/20 outline-none"
+                    />
+                    <Pencil className="w-3.5 h-3.5 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover/store:opacity-100 transition-opacity" />
+                  </div>
                 )}
               </div>
             </div>
@@ -396,17 +403,24 @@ export function ReviewReceipt({
           {ynabEnabled && isVerified && (
             <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-b-gray-100 bg-gray-50">
               <span className="text-xs font-mono text-gray-500 whitespace-nowrap">YNAB:</span>
-              <YnabSyncStatus
-                status={syncMut.isPending ? 'syncing' : (syncMut.data?.status ?? receipt.ynab_sync_status ?? null)}
-                reason={syncMut.data?.reason}
-                error={syncMut.isError}
-              />
+              {isDirty ? (
+                <span className="text-xs text-amber-600">Unsaved changes — save to sync</span>
+              ) : (
+                <YnabSyncStatus
+                  status={syncMut.isPending ? 'syncing' : (syncMut.data?.status ?? receipt.ynab_sync_status ?? null)}
+                  reason={syncMut.data?.reason}
+                  error={syncMut.isError}
+                />
+              )}
               <div className="flex-1" />
               <button
                 type="button"
                 onClick={() => syncMut.mutate(receipt.id)}
-                disabled={syncMut.isPending}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                disabled={syncMut.isPending || isDirty}
+                title={isDirty
+                  ? 'Save your changes first — sync pushes the saved receipt to YNAB'
+                  : 'Push this receipt to YNAB (updates the existing transaction if already synced)'}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {syncMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                 {receipt.ynab_transaction_id ? 'Re-sync' : 'Sync to YNAB'}

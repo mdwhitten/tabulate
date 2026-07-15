@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { CheckCircle, AlertTriangle, AlertCircle, Plus, Minus } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { fmt } from '../lib/utils'
@@ -41,6 +42,20 @@ const config: Record<Status, {
 
 export function VerifyBar({ status, title, detail, onManualTotal, manualTotal, onAddDifference, difference }: VerifyBarProps) {
   const { border, bg, icon } = config[status]
+
+  // Local draft for the manual-total field. We only commit on blur/Enter — never
+  // on each keystroke — otherwise entering the first digit could change the verify
+  // status and unmount this input mid-typing (e.g. "300" committing as "3").
+  const [totalDraft, setTotalDraft] = useState(manualTotal != null ? manualTotal.toFixed(2) : '')
+  useEffect(() => {
+    setTotalDraft(manualTotal != null ? manualTotal.toFixed(2) : '')
+  }, [manualTotal])
+
+  function commitTotal() {
+    const v = parseFloat(totalDraft)
+    if (!isNaN(v) && v > 0) onManualTotal?.(v)
+  }
+
   return (
     <div className={cn(
       'flex items-center gap-3 rounded-xl px-4 py-3 border-l-4 shadow-sm mb-2',
@@ -68,11 +83,12 @@ export function VerifyBar({ status, title, detail, onManualTotal, manualTotal, o
             <input
               type="text"
               inputMode="decimal"
-              defaultValue={manualTotal?.toFixed(2) ?? ''}
+              value={totalDraft}
               onFocus={e => e.target.select()}
-              onChange={e => {
-                const v = parseFloat(e.target.value)
-                if (!isNaN(v) && v > 0) onManualTotal(v)
+              onChange={e => setTotalDraft(e.target.value)}
+              onBlur={commitTotal}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { commitTotal(); (e.target as HTMLInputElement).blur() }
               }}
               className="w-20 px-2 py-1.5 text-sm font-mono outline-none"
               placeholder="0.00"

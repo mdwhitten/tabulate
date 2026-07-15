@@ -538,10 +538,13 @@ async def save_receipt(
     except Exception:
         pass
 
-    # Best-effort YNAB sync on approval. This is opt-in and must never block or
-    # fail a receipt save — swallow any error (it's recorded on the receipt's
-    # ynab_sync_status and can be retried from the UI).
-    if body.approve:
+    # Best-effort YNAB sync whenever the receipt is verified. This covers both
+    # approval and later edits saved on an already-verified receipt, so edits stay
+    # in sync without a manual re-sync. Opt-in and non-blocking — any error is
+    # swallowed (recorded on the receipt's ynab_sync_status, retryable from the UI).
+    async with db.execute("SELECT status FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+        status_row = await cur.fetchone()
+    if status_row and status_row["status"] == "verified":
         try:
             from services import ynab_service
             await ynab_service.sync_receipt(db, receipt_id)

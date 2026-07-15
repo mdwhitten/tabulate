@@ -9,41 +9,8 @@ import {
   useYnabCategories,
   useSaveYnabConfig,
 } from '../hooks/useYnab'
-import type { YnabCategoryGroup } from '../types'
-
-// ── YNAB category <select> (grouped) ──────────────────────────────────────────
-
-function YnabCategorySelect({
-  value, onChange, groups, disabled, placeholder,
-}: {
-  value: string
-  onChange: (v: string) => void
-  groups: YnabCategoryGroup[]
-  disabled?: boolean
-  placeholder: string
-}) {
-  return (
-    <select
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      disabled={disabled}
-      className={cn(
-        'text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 min-w-[200px]',
-        'focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]',
-        'disabled:opacity-50 disabled:cursor-not-allowed',
-      )}
-    >
-      <option value="">{placeholder}</option>
-      {groups.map(g => (
-        <optgroup key={g.id} label={g.name}>
-          {g.categories.map(c => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
-  )
-}
+import { SearchableSelect } from '../components/SearchableSelect'
+import type { SelectOption, SelectOptionGroup } from '../components/SearchableSelect'
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -79,7 +46,15 @@ export function Settings() {
   const budgetsQ = useYnabBudgets(tokenPresent)
   const accountsQ = useYnabAccounts(budgetId, tokenPresent)
   const categoriesQ = useYnabCategories(budgetId, tokenPresent)
-  const ynabGroups = categoriesQ.data ?? []
+
+  const budgetOptions: SelectOption[] = (budgetsQ.data ?? []).map(b => ({ value: b.id, label: b.name }))
+  const accountOptions: SelectOption[] = (accountsQ.data ?? []).map(a => ({
+    value: a.id, label: a.name, hint: a.closed ? '(closed)' : undefined,
+  }))
+  const categoryGroups: SelectOptionGroup[] = (categoriesQ.data ?? []).map(g => ({
+    label: g.name,
+    options: g.categories.map(c => ({ value: c.id, label: c.name })),
+  }))
 
   function handleBudgetChange(next: string) {
     if (next === budgetId) return
@@ -176,43 +151,29 @@ export function Settings() {
         <div className="px-5 py-4 space-y-4 border-b border-gray-100">
           <div className="flex items-center justify-between gap-4">
             <label className="text-sm font-medium text-gray-700">Budget</label>
-            <div className="flex items-center gap-2">
-              {budgetsQ.isFetching && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
-              <select
+            <div className="flex items-center gap-2 min-w-0">
+              {budgetsQ.isFetching && <Loader2 className="w-4 h-4 animate-spin text-gray-400 shrink-0" />}
+              <SearchableSelect
                 value={budgetId}
-                onChange={e => handleBudgetChange(e.target.value)}
+                onChange={handleBudgetChange}
+                options={budgetOptions}
                 disabled={!tokenPresent}
-                className={cn(
-                  'text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 min-w-[200px]',
-                  'focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]',
-                  'disabled:opacity-50 disabled:cursor-not-allowed',
-                )}
-              >
-                <option value="">Select a budget…</option>
-                {(budgetsQ.data ?? []).map(b => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+                placeholder="Select a budget…"
+                searchPlaceholder="Search budgets…"
+              />
             </div>
           </div>
 
           <div className="flex items-center justify-between gap-4">
             <label className="text-sm font-medium text-gray-700">Account</label>
-            <select
+            <SearchableSelect
               value={accountId}
-              onChange={e => setAccountId(e.target.value)}
+              onChange={setAccountId}
+              options={accountOptions}
               disabled={!tokenPresent || !budgetId}
-              className={cn(
-                'text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 min-w-[200px]',
-                'focus:outline-none focus:ring-2 focus:ring-[#03a9f4]/30 focus:border-[#03a9f4]',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
-              )}
-            >
-              <option value="">Select an account…</option>
-              {(accountsQ.data ?? []).map(a => (
-                <option key={a.id} value={a.id}>{a.name}{a.closed ? ' (closed)' : ''}</option>
-              ))}
-            </select>
+              placeholder="Select an account…"
+              searchPlaceholder="Search accounts…"
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4">
@@ -220,12 +181,13 @@ export function Settings() {
               <label className="text-sm font-medium text-gray-700">Default category</label>
               <p className="text-xs text-gray-500">Every transaction starts here; unmapped items land here too.</p>
             </div>
-            <YnabCategorySelect
+            <SearchableSelect
               value={defaultCategoryId}
               onChange={setDefaultCategoryId}
-              groups={ynabGroups}
+              options={categoryGroups}
               disabled={!tokenPresent || !budgetId}
               placeholder="Select a category…"
+              searchPlaceholder="Search categories…"
             />
           </div>
         </div>
@@ -244,12 +206,14 @@ export function Settings() {
                   <span className="text-base leading-none">{cat.icon}</span>
                   {cat.name}
                 </span>
-                <YnabCategorySelect
+                <SearchableSelect
                   value={mappings[cat.id] ?? ''}
                   onChange={v => setMappings(m => ({ ...m, [cat.id]: v }))}
-                  groups={ynabGroups}
+                  options={categoryGroups}
                   disabled={!tokenPresent || !budgetId}
                   placeholder="— Default —"
+                  emptyLabel="— Default —"
+                  searchPlaceholder="Search categories…"
                 />
               </div>
             ))}

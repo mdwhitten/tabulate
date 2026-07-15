@@ -114,10 +114,13 @@ export const YNAB_CATEGORY_GROUPS = [
   { id: 'g1', name: 'Monthly Bills', categories: [
     { id: 'ycat-default', name: 'Groceries (default)' },
     { id: 'ycat-groceries', name: 'Groceries' },
+    { id: 'ycat-utilities', name: 'Utilities' },
   ] },
   { id: 'g2', name: 'Everyday Expenses', categories: [
     { id: 'ycat-dining', name: 'Dining Out' },
     { id: 'ycat-household', name: 'Household Goods' },
+    { id: 'ycat-fun', name: 'Fun Money' },
+    { id: 'ycat-transport', name: 'Transportation' },
   ] },
 ]
 

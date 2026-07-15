@@ -83,8 +83,8 @@ class TestApprovalHook:
         assert row["status"] == "verified"
 
     @pytest.mark.asyncio
-    async def test_draft_save_does_not_sync(self, db, app):
-        rid = await insert_receipt(db)
+    async def test_draft_save_of_pending_receipt_does_not_sync(self, db, app):
+        rid = await insert_receipt(db, status="pending")
         with patch.object(
             ynab_service, "sync_receipt", new_callable=AsyncMock,
         ) as mock_sync:
@@ -92,3 +92,20 @@ class TestApprovalHook:
                 resp = await c.post(f"/api/receipts/{rid}/save", json={"approve": False})
         assert resp.status_code == 200
         mock_sync.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_editing_verified_receipt_resyncs(self, db, app):
+        # An edit saved on an already-verified receipt (approve=False) still syncs,
+        # so YNAB stays current without a manual re-sync.
+        rid = await insert_receipt(db, status="verified")
+        with patch.object(
+            ynab_service, "sync_receipt", new_callable=AsyncMock,
+            return_value={"status": "synced"},
+        ) as mock_sync:
+            async with client(app) as c:
+                resp = await c.post(
+                    f"/api/receipts/{rid}/save",
+                    json={"approve": False, "store_name": "Renamed Mart"},
+                )
+        assert resp.status_code == 200
+        mock_sync.assert_awaited_once()

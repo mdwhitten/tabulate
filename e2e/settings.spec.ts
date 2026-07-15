@@ -11,18 +11,33 @@ test.describe('Settings — YNAB integration', () => {
     const toggle = page.getByRole('switch', { name: 'Enable YNAB sync' })
     await expect(toggle).toHaveAttribute('aria-checked', 'true')
 
-    // Budgets loaded into the select
-    await expect(page.getByRole('option', { name: 'My Budget' })).toBeAttached()
+    // The searchable selects show the saved values on their triggers
+    await expect(page.getByRole('button', { name: 'My Budget' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Checking' })).toBeVisible()
   })
 
-  test('loads budget-scoped accounts and categories', async ({ page }) => {
+  test('budget dropdown opens and lists budgets', async ({ page }) => {
     await page.goto('/settings')
 
-    // Accounts + categories for the pre-selected budget-1 are fetched
-    // (category options appear in the default select and every mapping row)
-    await expect(page.getByRole('option', { name: 'Checking' })).toBeAttached()
-    await expect(page.getByRole('option', { name: 'Groceries (default)' }).first()).toBeAttached()
-    await expect(page.getByRole('option', { name: 'Dining Out' }).first()).toBeAttached()
+    await page.getByRole('button', { name: 'My Budget' }).click()
+    // Both budgets appear as options in the portal dropdown
+    await expect(page.getByRole('button', { name: 'Household' })).toBeVisible()
+  })
+
+  test('default-category dropdown supports built-in search', async ({ page }) => {
+    await page.goto('/settings')
+
+    // Open the default-category select (trigger shows the saved default)
+    await page.getByRole('button', { name: 'Groceries (default)' }).click()
+
+    // With >5 categories the search box is shown
+    const search = page.getByPlaceholder('Search categories…')
+    await expect(search.first()).toBeVisible()
+    await search.first().fill('Dining')
+
+    // Only the matching option remains
+    await expect(page.getByRole('button', { name: 'Dining Out' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Utilities' })).toHaveCount(0)
   })
 
   test('saves configuration changes', async ({ page }) => {
@@ -37,8 +52,9 @@ test.describe('Settings — YNAB integration', () => {
 
     await page.goto('/settings')
 
-    // Change the account (2nd combobox: budget, account, default, then mappings)
-    await page.getByRole('combobox').nth(1).selectOption('account-2')
+    // Change the account via the searchable dropdown
+    await page.getByRole('button', { name: 'Checking' }).click()
+    await page.getByRole('button', { name: 'Credit Card' }).click()
 
     await page.getByRole('button', { name: /Save settings/i }).click()
 
