@@ -5,6 +5,11 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-07-15
+
+### Changed
+- YNAB sync now distributes a receipt's tax/discount/reconciliation remainder proportionally across the transaction's categories (by each category's line-item share) instead of assigning it all to the default category. With a single category the whole remainder folds into it. Split amounts still sum exactly to the receipt total.
+
 ## [2.0.0] - 2026-07-15
 
 ### Added
