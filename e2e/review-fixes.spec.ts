@@ -30,7 +30,8 @@ test.describe('Review Receipt — bug fixes', () => {
     await expect(page.getByText(/\$300\.00/)).toBeVisible()
   })
 
-  test('re-sync is blocked while there are unsaved edits', async ({ page }) => {
+  test('re-sync is blocked while there are unsaved edits', async ({ page, isMobile }) => {
+    test.skip(!!isMobile, 'mobile uses a pencil icon, not an Edit button')
     await page.route(/\/api\/receipts\/3$/, route => {
       if (route.request().method() === 'GET') {
         return route.fulfill({
