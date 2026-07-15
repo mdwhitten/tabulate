@@ -1,4 +1,4 @@
-import { LayoutDashboard, Receipt, TrendingUp, Tag, BookOpen, Camera, X } from 'lucide-react'
+import { LayoutDashboard, Receipt, TrendingUp, Tag, BookOpen, Settings, Camera, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { Page } from '../../types'
 
@@ -27,6 +27,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { id: 'categories', label: 'Categories',   icon: <Tag              className="w-4 h-4" /> },
       { id: 'learned',    label: 'Learned Items', icon: <BookOpen        className="w-4 h-4" /> },
+      { id: 'settings',   label: 'Settings',      icon: <Settings        className="w-4 h-4" /> },
     ],
   },
 ]

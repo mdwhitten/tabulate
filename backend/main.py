@@ -7,7 +7,7 @@ import os
 import time
 
 from db.database import init_db
-from routers import receipts, items, categories, trends
+from routers import receipts, items, categories, trends, ynab
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -44,6 +44,7 @@ app.include_router(receipts.router, prefix="/api/receipts", tags=["receipts"])
 app.include_router(items.router,    prefix="/api/items",    tags=["items"])
 app.include_router(categories.router, prefix="/api/categories", tags=["categories"])
 app.include_router(trends.router,   prefix="/api/trends",   tags=["trends"])
+app.include_router(ynab.router,     prefix="/api/ynab",     tags=["ynab"])
 
 # Serve frontend static files
 FRONTEND_DIR = "/app/frontend"
@@ -126,6 +127,13 @@ async def diagnose():
     results["anthropic_key"] = {
         "ok": bool(key and key.startswith("sk-")),
         "set": bool(key),
+    }
+
+    # YNAB token (optional integration — presence only, never the value)
+    ynab_token = _os.environ.get("YNAB_API_TOKEN", "")
+    results["ynab_token"] = {
+        "ok": True,  # optional — absence is not an error
+        "set": bool(ynab_token),
     }
 
     return {"all_ok": all(v.get("ok") for v in results.values()), "checks": results}

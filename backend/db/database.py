@@ -32,6 +32,22 @@ async def init_db():
                 "ALTER TABLE receipts ADD COLUMN original_path TEXT"
             )
             logger.info("Migration: added receipts.original_path")
+        # YNAB sync tracking (added after initial schema)
+        if "ynab_transaction_id" not in cols:
+            await db.execute(
+                "ALTER TABLE receipts ADD COLUMN ynab_transaction_id TEXT"
+            )
+            logger.info("Migration: added receipts.ynab_transaction_id")
+        if "ynab_sync_status" not in cols:
+            await db.execute(
+                "ALTER TABLE receipts ADD COLUMN ynab_sync_status TEXT"
+            )
+            logger.info("Migration: added receipts.ynab_sync_status")
+        if "ynab_synced_at" not in cols:
+            await db.execute(
+                "ALTER TABLE receipts ADD COLUMN ynab_synced_at TEXT"
+            )
+            logger.info("Migration: added receipts.ynab_synced_at")
         # categories.is_disabled (added after initial schema)
         async with db.execute("PRAGMA table_info(categories)") as cur:
             cat_cols = {row[1] async for row in cur}
@@ -170,5 +186,19 @@ CREATE TABLE IF NOT EXISTS monthly_summary (
     total       REAL NOT NULL,
     updated_at  TEXT DEFAULT (datetime('now')),
     UNIQUE(year, month, category)
+);
+
+-- Generic key/value app settings (e.g. YNAB integration config).
+-- Secret tokens are NOT stored here — those come from env vars.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT
+);
+
+-- Optional Tabulate category → YNAB category mapping.
+-- Keyed on categories.id so it survives renames and is cleaned up on delete.
+CREATE TABLE IF NOT EXISTS ynab_category_map (
+    category_id      INTEGER PRIMARY KEY REFERENCES categories(id) ON DELETE CASCADE,
+    ynab_category_id TEXT NOT NULL
 );
 """

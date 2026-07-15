@@ -69,6 +69,8 @@ class Receipt(ReceiptBase):
     thumbnail_path: Optional[str] = None
     total_verified: bool = False
     status: str = "pending"
+    ynab_sync_status: Optional[str] = None
+    ynab_transaction_id: Optional[str] = None
     items: List[LineItem] = []
 
     class Config:
@@ -83,6 +85,7 @@ class ReceiptSummary(BaseModel):
     item_count: int
     total_verified: bool
     status: str
+    ynab_sync_status: Optional[str] = None
 
 
 # ── Item Mapping ───────────────────────────────────────

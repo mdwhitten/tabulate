@@ -91,9 +91,14 @@ tabulate/
 
 ## Environment Variables
 
+See [`.env.example`](.env.example) for a template you can copy.
+
 | Variable | Required | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | API key for Claude Vision categorization |
+| `YNAB_API_TOKEN` | No | YNAB Personal Access Token — enables syncing approved receipts to YNAB. Leave unset to disable the integration. |
+| `LOG_LEVEL` | No | Log verbosity: `DEBUG`/`INFO`/`WARNING`/`ERROR` (default: `INFO`) |
+| `CORS_ORIGINS` | No | Comma-separated allowed CORS origins (default: `*`) |
 | `DB_PATH` | No | SQLite path (default: `/data/tabulate.db`) |
 | `IMAGE_DIR` | No | Image storage path (default: `/data/images`) |
 

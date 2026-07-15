@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle, Pencil } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle, Pencil, Loader2, RefreshCw } from 'lucide-react'
 import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
@@ -10,8 +10,29 @@ import { ReceiptPreview } from '../components/ReceiptPreview'
 import { CropModal } from '../components/CropModal'
 import { replaceReceiptImage } from '../api/receipts'
 import { useRecategorize } from '../hooks/useReceipts'
+import { useYnabStatus, useSyncReceiptToYnab } from '../hooks/useYnab'
 import { fmt } from '../lib/utils'
 import { reviewReducer, isDirty as computeIsDirty } from './reviewReducer'
+
+// ── YNAB sync status pill ──────────────────────────────────────────────────────
+
+function YnabSyncStatus({ status, reason, error }: { status: string | null; reason?: string; error?: boolean }) {
+  if (error) {
+    return <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Sync failed</span>
+  }
+  switch (status) {
+    case 'syncing':
+      return <span className="text-xs text-gray-500 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing…</span>
+    case 'synced':
+      return <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Synced</span>
+    case 'failed':
+      return <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Failed</span>
+    case 'skipped':
+      return <span className="text-xs text-gray-500">{reason || 'Skipped'}</span>
+    default:
+      return <span className="text-xs text-gray-400">Not synced yet</span>
+  }
+}
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +58,10 @@ export function ReviewReceipt({
   const isVerified = receipt.status === 'verified'
   const [isEditing, setIsEditing] = useState(false)
   const isLocked = isVerified && !isEditing
+
+  const { data: ynabStatus } = useYnabStatus()
+  const syncMut = useSyncReceiptToYnab()
+  const ynabEnabled = ynabStatus?.enabled ?? false
 
   const [state, dispatch] = useReducer(reviewReducer, {
     items:               receipt.items,
@@ -310,13 +335,20 @@ export function ReviewReceipt({
                     {storeName || 'Unknown Store'}
                   </h2>
                 ) : (
-                  <input
-                    type="text"
-                    value={storeName}
-                    onChange={e => setStoreName(e.target.value)}
-                    placeholder="Store name"
-                    className="text-lg font-semibold text-gray-900 leading-tight bg-transparent border-none outline-none focus:ring-0 w-full truncate"
-                  />
+                  <div className="relative flex-1 min-w-0 group/store">
+                    <input
+                      type="text"
+                      value={storeName}
+                      onChange={e => setStoreName(e.target.value)}
+                      placeholder="Store name"
+                      title="Click to edit store name"
+                      className="block text-lg font-semibold text-gray-900 leading-tight w-full truncate cursor-text
+                                 bg-transparent rounded-md pl-2 pr-7 py-1 -ml-2 border border-transparent transition-colors
+                                 hover:border-gray-200 hover:bg-gray-50
+                                 focus:bg-white focus:border-[#03a9f4] focus:ring-2 focus:ring-[#03a9f4]/20 outline-none"
+                    />
+                    <Pencil className="w-3.5 h-3.5 text-gray-400 absolute right-2 inset-y-0 my-auto pointer-events-none opacity-0 group-hover/store:opacity-100 transition-opacity" />
+                  </div>
                 )}
               </div>
             </div>
@@ -366,6 +398,35 @@ export function ReviewReceipt({
               <span className="text-xs text-red-500 whitespace-nowrap">Required</span>
             )}
           </div>
+
+          {/* YNAB sync row — only when integration is enabled and receipt is verified */}
+          {ynabEnabled && isVerified && (
+            <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-b-gray-100 bg-gray-50">
+              <span className="text-xs font-mono text-gray-500 whitespace-nowrap">YNAB:</span>
+              {isDirty ? (
+                <span className="text-xs text-amber-600">Unsaved changes — save to sync</span>
+              ) : (
+                <YnabSyncStatus
+                  status={syncMut.isPending ? 'syncing' : (syncMut.data?.status ?? receipt.ynab_sync_status ?? null)}
+                  reason={syncMut.data?.reason}
+                  error={syncMut.isError}
+                />
+              )}
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={() => syncMut.mutate(receipt.id)}
+                disabled={syncMut.isPending || isDirty}
+                title={isDirty
+                  ? 'Save your changes first — sync pushes the saved receipt to YNAB'
+                  : 'Push this receipt to YNAB (updates the existing transaction if already synced)'}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {syncMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                {receipt.ynab_transaction_id ? 'Re-sync' : 'Sync to YNAB'}
+              </button>
+            </div>
+          )}
 
           {/* Items table */}
           <div className="flex-1 overflow-auto">

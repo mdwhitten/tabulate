@@ -538,6 +538,19 @@ async def save_receipt(
     except Exception:
         pass
 
+    # Best-effort YNAB sync whenever the receipt is verified. This covers both
+    # approval and later edits saved on an already-verified receipt, so edits stay
+    # in sync without a manual re-sync. Opt-in and non-blocking — any error is
+    # swallowed (recorded on the receipt's ynab_sync_status, retryable from the UI).
+    async with db.execute("SELECT status FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+        status_row = await cur.fetchone()
+    if status_row and status_row["status"] == "verified":
+        try:
+            from services import ynab_service
+            await ynab_service.sync_receipt(db, receipt_id)
+        except Exception as e:
+            logger.warning("YNAB sync failed for receipt %s: %s", receipt_id, e)
+
     return {"status": "ok", "receipt_id": receipt_id}
 
 
@@ -612,7 +625,7 @@ async def list_receipts(
         async with db.execute(
             """
             SELECT r.id, r.store_name, r.receipt_date, r.scanned_at,
-                   r.total, r.total_verified, r.status,
+                   r.total, r.total_verified, r.status, r.ynab_sync_status,
                    COUNT(li.id) as item_count
             FROM receipts r
             LEFT JOIN line_items li ON li.receipt_id = r.id
@@ -639,6 +652,7 @@ async def list_receipts(
                 item_count=row["item_count"],
                 total_verified=bool(row["total_verified"]),
                 status=row["status"] or "pending",
+                ynab_sync_status=row["ynab_sync_status"] if "ynab_sync_status" in row.keys() else None,
             ))
         except Exception:
             logger.exception("Failed to serialize receipt id=%s, raw=%s",
@@ -683,6 +697,8 @@ async def get_receipt(
         total=row["total"],
         total_verified=bool(row["total_verified"]),
         status=row["status"],
+        ynab_sync_status=row["ynab_sync_status"] if "ynab_sync_status" in row.keys() else None,
+        ynab_transaction_id=row["ynab_transaction_id"] if "ynab_transaction_id" in row.keys() else None,
         items=[
             LineItem(
                 id=i["id"], receipt_id=i["receipt_id"],
