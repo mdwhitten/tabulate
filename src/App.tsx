@@ -10,7 +10,7 @@ import { LearnedItems } from './pages/LearnedItems'
 import { Settings } from './pages/Settings'
 import { UploadModal } from './components/UploadModal'
 import { DuplicateWarningModal } from './components/DuplicateWarningModal'
-import { useReceipt } from './hooks/useReceipts'
+import { useReceipt, useReceiptList } from './hooks/useReceipts'
 import { useCategoryList } from './hooks/useCategories'
 import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
 import type { Page } from './types'
@@ -18,7 +18,9 @@ import type { ProcessingResult } from './api/receipts'
 import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
 import type { Receipt, SaveReceiptBody, DuplicateMatch } from './types'
 import { advanceBatch, batchPosition } from './lib/batch'
-import { ArrowLeft, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2, Pencil, SkipForward } from 'lucide-react'
+import { EMPTY_FILTER, filterReceipts, adjacentIds } from './lib/receiptFilter'
+import type { ReceiptFilter } from './lib/receiptFilter'
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2, Pencil, SkipForward } from 'lucide-react'
 import './index.css'
 
 // ── Ingress-aware URL helpers ─────────────────────────────────────────────────
@@ -212,6 +214,11 @@ export default function App() {
 
   const { page, receiptId } = route
 
+  // Receipt-list filter lives here (not in AllReceipts) so it survives navigating
+  // into a receipt and back, and so it can drive prev/next in the review view.
+  const [receiptFilter, setReceiptFilter] = useState<ReceiptFilter>(EMPTY_FILTER)
+  const { data: receiptSummaries = [] } = useReceiptList()
+
   /** Show the duplicate warning modal and return whether the user chose to proceed. */
   const showDupeWarning = useCallback((dupes: DuplicateMatch[], continueLabel: string): Promise<boolean> => {
     return new Promise(resolve => {
@@ -319,6 +326,15 @@ export default function App() {
 
   const batchInfo = batchPosition(batch.length, batchIndex)
   const isReview    = page === 'review'
+
+  // Prev/next navigation across the *filtered* receipts list — only when a
+  // receipt was opened from the list (not during a fresh-upload batch review).
+  const listNav = useMemo(() => {
+    if (!isReview || receiptId == null || freshResult != null) return null
+    const filtered = filterReceipts(receiptSummaries, receiptFilter)
+    const adj = adjacentIds(filtered, receiptId)
+    return adj.index === -1 ? null : adj
+  }, [isReview, receiptId, freshResult, receiptSummaries, receiptFilter])
   const reviewTitle = isReview
     ? (freshResult?.store_name ?? 'Receipt')
       + (freshResult?.receipt_date ? ` · ${freshResult.receipt_date}` : '')
@@ -335,13 +351,41 @@ export default function App() {
         topbarTitle={reviewTitle}
         embedded={!!INGRESS_PREFIX}
         topbarLeft={isReview ? (
-          <button
-            onClick={() => navigate('receipts')}
-            className="flex items-center justify-center w-9 h-9 sm:w-auto sm:h-auto sm:gap-1.5 sm:px-2 sm:py-1.5 text-sm text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors mr-1 sm:mr-2"
-          >
-            <ArrowLeft className="w-5 h-5 sm:w-4 sm:h-4" />
-            <span className="hidden sm:inline">All Receipts</span>
-          </button>
+          <div className="flex items-center gap-1 mr-1 sm:mr-2">
+            <button
+              onClick={() => navigate('receipts')}
+              aria-label="All receipts"
+              className="flex items-center justify-center w-9 h-9 sm:w-auto sm:h-auto sm:gap-1.5 sm:px-2 sm:py-1.5 text-sm text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">All Receipts</span>
+            </button>
+            {listNav && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => listNav.prevId != null && navigate('review', listNav.prevId)}
+                  disabled={listNav.prevId == null}
+                  title="Previous receipt"
+                  aria-label="Previous receipt"
+                  className="flex items-center justify-center w-9 h-9 text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs text-gray-400 tabular-nums px-0.5 min-w-10 text-center">
+                  {listNav.index + 1}/{listNav.total}
+                </span>
+                <button
+                  onClick={() => listNav.nextId != null && navigate('review', listNav.nextId)}
+                  disabled={listNav.nextId == null}
+                  title="Next receipt"
+                  aria-label="Next receipt"
+                  className="flex items-center justify-center w-9 h-9 text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
         ) : undefined}
         topbarRight={isReview ? (
           <TopbarReceiptActions
@@ -368,7 +412,11 @@ export default function App() {
           )}
 
           {page === 'receipts' && (
-            <AllReceipts onOpenReceipt={openReceipt} />
+            <AllReceipts
+              onOpenReceipt={openReceipt}
+              filter={receiptFilter}
+              onFilterChange={setReceiptFilter}
+            />
           )}
 
           {page === 'review' && receiptId != null && (

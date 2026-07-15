@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle, Pencil, Loader2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Store, RotateCcw, Save, Trash2, CheckCircle, Pencil, Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import type { Receipt, Category, SaveReceiptBody, NewLineItemBody } from '../types'
 import { Badge } from '../components/Badge'
 import { VerifyBar } from '../components/VerifyBar'
@@ -63,6 +63,10 @@ export function ReviewReceipt({
   const syncMut = useSyncReceiptToYnab()
   const ynabEnabled = ynabStatus?.enabled ?? false
 
+  // Quick filter: show only items still auto-categorized by the AI (learned /
+  // manual / just-corrected items are assumed correct and hidden).
+  const [showAiOnly, setShowAiOnly] = useState(false)
+
   const [state, dispatch] = useReducer(reviewReducer, {
     items:               receipt.items,
     categoryCorrections: {},
@@ -105,6 +109,15 @@ export function ReviewReceipt({
     () => computeIsDirty(state, localItems, storeName, receiptDate, receipt, isVerified),
     [isVerified, state, localItems, storeName, receiptDate, receipt],
   )
+
+  // AI-only item filter (item 4). Learned/manual/local items are hidden when on.
+  const aiCount = state.items.filter(i => i.category_source === 'ai').length
+  const visibleItems = showAiOnly ? state.items.filter(i => i.category_source === 'ai') : state.items
+  const visibleLocalItems = showAiOnly ? [] : localItems
+  // Once nothing is auto-categorized (all reviewed), drop back to the full list.
+  useEffect(() => {
+    if (aiCount === 0 && showAiOnly) setShowAiOnly(false)
+  }, [aiCount, showAiOnly])
 
   // Warn on browser refresh / close when there are unsaved edits
   useEffect(() => {
@@ -428,11 +441,37 @@ export function ReviewReceipt({
             </div>
           )}
 
+          {/* Item filter toolbar — only when there's something auto-categorized to review */}
+          {(aiCount > 0 || showAiOnly) && (
+            <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-gray-100 bg-white">
+              <button
+                type="button"
+                onClick={() => setShowAiOnly(v => !v)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                  showAiOnly
+                    ? 'bg-[#03a9f4]/10 text-[#0284c7] border-[#03a9f4]/40'
+                    : 'text-gray-500 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Auto-categorized only
+              </button>
+              <span className="text-xs text-gray-400">
+                {showAiOnly ? `${visibleItems.length} shown` : `${aiCount} to review`}
+              </span>
+            </div>
+          )}
+
           {/* Items table */}
           <div className="flex-1 overflow-auto">
+            {showAiOnly && visibleItems.length === 0 ? (
+              <div className="py-12 text-center text-sm text-gray-400">
+                Nothing left to review — all items are categorized.
+              </div>
+            ) : (
             <LineItemsTable
-              items={state.items}
-              localItems={localItems}
+              items={visibleItems}
+              localItems={visibleLocalItems}
               categories={categories}
               locked={isVerified}
               allowCategoryEdit={isEditing}
@@ -444,6 +483,7 @@ export function ReviewReceipt({
               onLocalItemChange={handleLocalItemChange}
               onDeleteLocal={handleDeleteLocal}
             />
+            )}
           </div>
 
           {/* Footer */}

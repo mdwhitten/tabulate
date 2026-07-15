@@ -1,33 +1,26 @@
-import { useState } from 'react'
 import { Search, Loader2, Trash2 } from 'lucide-react'
 import { useReceiptList, useDeleteReceipt } from '../hooks/useReceipts'
 import { storeIcon, fmt } from '../lib/utils'
 import { Badge } from '../components/Badge'
+import { STATUS_FILTERS, filterReceipts } from '../lib/receiptFilter'
+import type { ReceiptFilter } from '../lib/receiptFilter'
 import type { ReceiptSummary } from '../types'
 
 interface AllReceiptsProps {
   onOpenReceipt: (id: number) => void
+  /** Filter is owned by App so it survives navigating into a receipt and back. */
+  filter: ReceiptFilter
+  onFilterChange: (filter: ReceiptFilter) => void
 }
 
-const STATUS_FILTERS = ['All', 'Approved', 'Pending'] as const
-type StatusFilter = typeof STATUS_FILTERS[number]
-
-export function AllReceipts({ onOpenReceipt }: AllReceiptsProps) {
-  const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<StatusFilter>('All')
+export function AllReceipts({ onOpenReceipt, filter, onFilterChange }: AllReceiptsProps) {
+  const { search, status } = filter
+  const setSearch = (s: string) => onFilterChange({ ...filter, search: s })
+  const setStatus = (s: typeof STATUS_FILTERS[number]) => onFilterChange({ ...filter, status: s })
 
   const { data: receipts = [], isLoading, isError } = useReceiptList()
 
-  const filtered = receipts.filter(r => {
-    const matchSearch = !search ||
-      r.store_name?.toLowerCase().includes(search.toLowerCase()) ||
-      r.receipt_date?.includes(search)
-    const matchStatus =
-      status === 'All' ||
-      (status === 'Approved' && r.status === 'verified') ||
-      (status === 'Pending'  && r.status !== 'verified')
-    return matchSearch && matchStatus
-  })
+  const filtered = filterReceipts(receipts, filter)
 
   return (
     <div className="space-y-4 max-w-5xl">
