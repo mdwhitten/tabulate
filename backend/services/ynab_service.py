@@ -26,6 +26,7 @@ negative for outflows.
 import asyncio
 import datetime
 import logging
+import math
 import os
 from typing import Optional
 
@@ -297,9 +298,9 @@ def build_transaction_payload(
     """Build a YNAB SaveTransaction payload from a receipt.
 
     Groups line items by their mapped YNAB category (unmapped → default),
-    reconciles the tax/discount remainder into the default category so the
-    parts sum exactly to the real charged total, and produces either a single
-    transaction or a split (subtransactions).
+    distributes the tax/discount/reconciliation remainder proportionally across
+    those categories so the parts sum exactly to the real charged total, and
+    produces either a single transaction or a split (subtransactions).
     """
     item_total = round(sum((li["price"] or 0) * (li.get("quantity") or 1) for li in line_items), 2)
     total_dollars = receipt.get("total")
@@ -318,9 +319,26 @@ def build_transaction_payload(
         ycat: _to_milliunits(round(d, 2)) for ycat, d in group_dollars.items()
     }
 
-    # Reconcile the remainder (tax − discounts − rounding) into the default category.
+    # Distribute the remainder (tax − discounts − rounding) proportionally across the
+    # categories by each category's line-item share, so tax and reconciliation amounts
+    # land with the goods they belong to rather than all in the default category. With
+    # a single category the whole remainder folds into it. Uses the largest-remainder
+    # method so the parts still sum exactly to the total.
     remainder = total_mu - sum(group_mu.values())
-    group_mu[default_category_id] = group_mu.get(default_category_id, 0) + remainder
+    if remainder != 0:
+        subtotal = sum(group_dollars.values())
+        if group_dollars and subtotal > 0:
+            ycats = list(group_dollars.keys())
+            exact = [remainder * group_dollars[y] / subtotal for y in ycats]
+            alloc = [math.floor(x) for x in exact]
+            leftover = remainder - sum(alloc)  # whole +1 milliunits still to hand out
+            for i in sorted(range(len(ycats)), key=lambda i: exact[i] - alloc[i], reverse=True)[:leftover]:
+                alloc[i] += 1
+            for y, a in zip(ycats, alloc):
+                group_mu[y] += a
+        else:
+            # No line-item subtotal to distribute against — fall back to default.
+            group_mu[default_category_id] = group_mu.get(default_category_id, 0) + remainder
 
     # Drop zero-amount splits; always keep at least one.
     group_mu = {k: v for k, v in group_mu.items() if v != 0}

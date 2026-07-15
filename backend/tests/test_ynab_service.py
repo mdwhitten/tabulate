@@ -67,29 +67,42 @@ class TestBuildPayload:
         assert p["cleared"] == "uncleared"
         assert p["payee_name"] == "Mart"
 
-    def test_split_across_mapped_categories_with_remainder(self):
+    def test_remainder_distributed_proportionally(self):
         items = [{"category": "Produce", "price": 3.0, "quantity": 1},
                  {"category": "Snacks", "price": 5.0, "quantity": 1}]
-        # total 11 → 3 remainder (tax) lands in default; Snacks unmapped → default
+        # total 11 → $3 remainder (tax) spread by subtotal share: Produce 3/8, default 5/8.
         p = build_transaction_payload(
             self._receipt(11.0), items, "acct", "ycat-default", {"Produce": "ycat-prod"}
         )
         assert p["category_id"] is None
         subs = {s["category_id"]: s["amount"] for s in p["subtransactions"]}
-        assert subs["ycat-prod"] == -3000
-        # Snacks (5) + remainder (3) both to default
-        assert subs["ycat-default"] == -8000
+        assert subs["ycat-prod"] == -4125      # 3000 + 3/8 of 3000
+        assert subs["ycat-default"] == -6875   # 5000 + 5/8 of 3000
         assert sum(s["amount"] for s in p["subtransactions"]) == p["amount"] == -11000
 
-    def test_mapped_single_category_with_tax_splits_out_remainder(self):
+    def test_single_mapped_category_absorbs_tax(self):
         items = [{"category": "Produce", "price": 10.0, "quantity": 1}]
         p = build_transaction_payload(
             self._receipt(11.0), items, "acct", "ycat-default", {"Produce": "ycat-prod"}
         )
-        # tax remainder forces a split so the default category is represented
+        # One category → the whole $1 tax folds into it; stays a single transaction.
+        assert p["category_id"] == "ycat-prod"
+        assert p["amount"] == -11000
+        assert "subtransactions" not in p
+
+    def test_remainder_split_sums_exactly_with_rounding(self):
+        # Uneven split (1:2) of a remainder that doesn't divide evenly must still
+        # sum to the total (largest-remainder allocation).
+        items = [{"category": "Produce", "price": 1.0, "quantity": 1},
+                 {"category": "Snacks", "price": 2.0, "quantity": 1}]
+        p = build_transaction_payload(
+            self._receipt(3.10), items, "acct", "ycat-default",
+            {"Produce": "ycat-prod", "Snacks": "ycat-snacks"},
+        )
         subs = {s["category_id"]: s["amount"] for s in p["subtransactions"]}
-        assert subs["ycat-prod"] == -10000
-        assert subs["ycat-default"] == -1000
+        assert subs["ycat-prod"] == -1033   # 1000 + 33 (0.10 * 1/3, rounded up)
+        assert subs["ycat-snacks"] == -2067  # 2000 + 67
+        assert sum(s["amount"] for s in p["subtransactions"]) == p["amount"] == -3100
 
     def test_zero_remainder_stays_single(self):
         items = [{"category": "Produce", "price": 10.0, "quantity": 1}]
