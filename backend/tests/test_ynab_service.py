@@ -114,6 +114,46 @@ class TestBuildPayload:
         assert p["amount"] == -4250
 
 
+# ── SDK model builders (serialization guard) ─────────────────────────────────
+
+class TestModelBuilders:
+    """Guard the payload → SDK model mapping (the `date` field uses an alias)."""
+
+    def _payload(self, split: bool):
+        import uuid
+        acct, c1, c2 = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+        base = {
+            "account_id": acct, "date": "2026-07-01", "amount": -11000,
+            "payee_name": "Mart", "memo": "Tabulate receipt #5",
+            "cleared": "uncleared", "approved": False,
+        }
+        if split:
+            base["category_id"] = None
+            base["subtransactions"] = [
+                {"amount": -3000, "category_id": c1}, {"amount": -8000, "category_id": c2}]
+        else:
+            base["category_id"] = c1
+        return base
+
+    def test_new_transaction_serializes_split(self):
+        import json
+        from services.ynab_service import _new_transaction
+        d = json.loads(_new_transaction(self._payload(split=True)).to_json())
+        assert d["date"] == "2026-07-01"
+        assert d["amount"] == -11000
+        assert d["cleared"] == "uncleared"
+        assert d["approved"] is False
+        assert sum(s["amount"] for s in d["subtransactions"]) == -11000
+
+    def test_existing_transaction_serializes_single(self):
+        import json
+        from services.ynab_service import _existing_transaction
+        d = json.loads(_existing_transaction(self._payload(split=False)).to_json())
+        assert d["date"] == "2026-07-01"
+        assert d["category_id"] is not None
+        assert not d.get("subtransactions")
+
+
 # ── Config storage ───────────────────────────────────────────────────────────
 
 class TestConfig:
@@ -172,21 +212,18 @@ class TestSyncReceipt:
     async def test_creates_transaction_and_stores_id(self, db):
         rid = await insert_receipt(db, total=10.0)
         await insert_item(db, rid, "Snacks", 10.0)
-        pid = await cat_id(db, "Snacks")
         with patch.object(ynab_service, "YNAB_API_TOKEN", "test-token"):
-            await configure(db, mappings=[{"category_id": pid, "ynab_category_id": "ycat-snacks"}])
+            await configure(db)
             with patch.object(
-                ynab_service, "_request", new_callable=AsyncMock,
-                return_value={"transaction": {"id": "txn-123"}},
-            ) as mock_req:
+                ynab_service, "_create_transaction", new_callable=AsyncMock,
+                return_value="txn-123",
+            ) as mock_create:
                 result = await ynab_service.sync_receipt(db, rid)
 
         assert result["status"] == "synced"
         assert result["transaction_id"] == "txn-123"
-        # First call is a POST (create)
-        method, path = mock_req.call_args[0][0], mock_req.call_args[0][1]
-        assert method == "POST"
-        assert "/budgets/budget-1/transactions" == path
+        mock_create.assert_awaited_once()
+        assert mock_create.call_args[0][0] == "budget-1"  # budget id
         async with db.execute(
             "SELECT ynab_transaction_id, ynab_sync_status FROM receipts WHERE id = ?", (rid,)
         ) as cur:
@@ -195,7 +232,9 @@ class TestSyncReceipt:
         assert row["ynab_sync_status"] == "synced"
 
     @pytest.mark.asyncio
-    async def test_updates_existing_transaction(self, db):
+    async def test_updates_single_category_in_place(self, db):
+        # No mapping + total == item sum → a single (non-split) transaction, which
+        # is updated in place via _update_transaction.
         rid = await insert_receipt(db, total=10.0)
         await insert_item(db, rid, "Snacks", 10.0)
         await db.execute(
@@ -204,16 +243,68 @@ class TestSyncReceipt:
         await db.commit()
         with patch.object(ynab_service, "YNAB_API_TOKEN", "test-token"):
             await configure(db)
-            with patch.object(
-                ynab_service, "_request", new_callable=AsyncMock,
-                return_value={"transaction": {"id": "existing-1"}},
-            ) as mock_req:
+            with patch.object(ynab_service, "_get_transaction", new_callable=AsyncMock,
+                              return_value={"id": "existing-1", "is_split": False}), \
+                 patch.object(ynab_service, "_update_transaction", new_callable=AsyncMock,
+                              return_value="existing-1") as mock_update, \
+                 patch.object(ynab_service, "_delete_transaction", new_callable=AsyncMock) as mock_delete, \
+                 patch.object(ynab_service, "_create_transaction", new_callable=AsyncMock) as mock_create:
                 result = await ynab_service.sync_receipt(db, rid)
 
         assert result["status"] == "synced"
-        method, path = mock_req.call_args[0][0], mock_req.call_args[0][1]
-        assert method == "PUT"
-        assert path == "/budgets/budget-1/transactions/existing-1"
+        mock_update.assert_awaited_once()
+        assert mock_update.call_args[0][1] == "existing-1"  # txn id
+        mock_delete.assert_not_awaited()
+        mock_create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_split_transaction_is_deleted_and_recreated(self, db):
+        # Existing YNAB transaction is a split → cannot be updated, so delete + recreate.
+        rid = await insert_receipt(db, total=10.0)
+        await insert_item(db, rid, "Snacks", 10.0)
+        await db.execute(
+            "UPDATE receipts SET ynab_transaction_id = 'old-split' WHERE id = ?", (rid,)
+        )
+        await db.commit()
+        with patch.object(ynab_service, "YNAB_API_TOKEN", "test-token"):
+            await configure(db)
+            with patch.object(ynab_service, "_get_transaction", new_callable=AsyncMock,
+                              return_value={"id": "old-split", "is_split": True}), \
+                 patch.object(ynab_service, "_delete_transaction", new_callable=AsyncMock) as mock_delete, \
+                 patch.object(ynab_service, "_create_transaction", new_callable=AsyncMock,
+                              return_value="new-txn") as mock_create, \
+                 patch.object(ynab_service, "_update_transaction", new_callable=AsyncMock) as mock_update:
+                result = await ynab_service.sync_receipt(db, rid)
+
+        assert result["status"] == "synced"
+        assert result["transaction_id"] == "new-txn"
+        mock_delete.assert_awaited_once()
+        assert mock_delete.call_args[0][1] == "old-split"
+        mock_create.assert_awaited_once()
+        mock_update.assert_not_awaited()
+        async with db.execute("SELECT ynab_transaction_id FROM receipts WHERE id = ?", (rid,)) as cur:
+            row = await cur.fetchone()
+        assert row["ynab_transaction_id"] == "new-txn"
+
+    @pytest.mark.asyncio
+    async def test_recreates_when_existing_transaction_is_gone(self, db):
+        rid = await insert_receipt(db, total=10.0)
+        await insert_item(db, rid, "Snacks", 10.0)
+        await db.execute(
+            "UPDATE receipts SET ynab_transaction_id = 'deleted-in-ynab' WHERE id = ?", (rid,)
+        )
+        await db.commit()
+        with patch.object(ynab_service, "YNAB_API_TOKEN", "test-token"):
+            await configure(db)
+            with patch.object(ynab_service, "_get_transaction", new_callable=AsyncMock,
+                              return_value=None), \
+                 patch.object(ynab_service, "_create_transaction", new_callable=AsyncMock,
+                              return_value="fresh-1") as mock_create:
+                result = await ynab_service.sync_receipt(db, rid)
+
+        assert result["status"] == "synced"
+        assert result["transaction_id"] == "fresh-1"
+        mock_create.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_marks_failed_on_api_error(self, db):
@@ -222,7 +313,7 @@ class TestSyncReceipt:
         with patch.object(ynab_service, "YNAB_API_TOKEN", "test-token"):
             await configure(db)
             with patch.object(
-                ynab_service, "_request", new_callable=AsyncMock,
+                ynab_service, "_create_transaction", new_callable=AsyncMock,
                 side_effect=ynab_service.YnabError("boom"),
             ):
                 with pytest.raises(ynab_service.YnabError):

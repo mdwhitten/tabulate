@@ -8,28 +8,34 @@ Design:
   - All other config (enabled flag, budget, account, default category, and the
     optional per-Tabulate-category → YNAB-category mapping) lives in the DB
     (`app_settings` + `ynab_category_map`).
-  - On approval a transaction is created (or, on re-sync, updated) as an
-    *unapproved, uncleared* transaction with NO import_id, so YNAB auto-matches it
-    against the real bank charge when it later imports (imported → user-entered,
-    same amount, date ±10 days).
+  - On approval a transaction is created as an *unapproved, uncleared* transaction
+    with NO import_id, so YNAB auto-matches it against the real bank charge when it
+    later imports (imported → user-entered, same amount, date ±10 days).
+  - On re-sync of an edited receipt: a single-category transaction is updated in
+    place (preserving any YNAB match). A split transaction cannot be updated via the
+    API (YNAB ignores date/amount/category changes and can't alter subtransactions),
+    so it is deleted and recreated.
   - Amounts use `receipt.total` (the real card charge). When a receipt spans more
     than one mapped YNAB category the transaction is split; the remainder between
     the line-item sum and the total (tax − discounts) lands in the default category.
 
-All amounts YNAB sends/receives are integer *milliunits* ($1.00 == 1000), negative
-for outflows.
+Uses the official `ynab` SDK, which is synchronous — calls run in worker threads
+via asyncio.to_thread. All amounts are integer *milliunits* ($1.00 == 1000),
+negative for outflows.
 """
+import asyncio
+import datetime
 import logging
 import os
 from typing import Optional
 
 import aiosqlite
-import httpx
+import ynab
+from ynab.rest import ApiException
 
 logger = logging.getLogger("tabulate.ynab")
 
 YNAB_API_TOKEN = os.environ.get("YNAB_API_TOKEN", "")
-YNAB_API_BASE = "https://api.ynab.com/v1"
 
 # app_settings keys
 KEY_ENABLED = "ynab_enabled"
@@ -113,74 +119,165 @@ async def save_config(db: aiosqlite.Connection, cfg: dict) -> dict:
     return await get_config(db)
 
 
-# ── HTTP helpers ──────────────────────────────────────────────────────────────
+# ── YNAB SDK client + call wrapper ────────────────────────────────────────────
+#
+# The official `ynab` SDK is synchronous (urllib3), so every call runs in a worker
+# thread via asyncio.to_thread to avoid blocking the event loop. `_call` maps the
+# SDK's ApiException (and any transport error) into our YnabError. Note the SDK
+# calls a budget a "plan".
 
-def _client() -> httpx.AsyncClient:
+def _client() -> ynab.ApiClient:
     if not YNAB_API_TOKEN:
         raise YnabError("YNAB_API_TOKEN not set")
-    return httpx.AsyncClient(
-        base_url=YNAB_API_BASE,
-        headers={"Authorization": f"Bearer {YNAB_API_TOKEN}"},
-        timeout=15.0,
-    )
+    return ynab.ApiClient(ynab.Configuration(access_token=YNAB_API_TOKEN))
 
 
-async def _request(method: str, path: str, json: Optional[dict] = None) -> dict:
+async def _call(fn, *args):
+    """Run a synchronous SDK function in a thread, mapping errors to YnabError."""
     try:
-        async with _client() as client:
-            resp = await client.request(method, path, json=json)
-    except httpx.HTTPError as e:
+        return await asyncio.to_thread(fn, *args)
+    except YnabError:
+        raise
+    except ApiException as e:
+        detail = getattr(e, "reason", None) or str(e)
+        raise YnabError(f"YNAB API {getattr(e, 'status', '') or ''}: {detail}".strip()) from e
+    except Exception as e:  # network / unexpected
         raise YnabError(f"YNAB request failed: {e}") from e
-
-    if resp.status_code >= 400:
-        detail = resp.text
-        try:
-            err = resp.json().get("error", {})
-            detail = err.get("detail") or err.get("name") or detail
-        except Exception:
-            pass
-        raise YnabError(f"YNAB API {resp.status_code}: {detail}")
-
-    try:
-        return resp.json().get("data", {})
-    except Exception as e:
-        raise YnabError(f"Invalid YNAB response: {e}") from e
 
 
 # ── Read endpoints (for the config UI) ────────────────────────────────────────
 
+def _sync_list_budgets() -> list[dict]:
+    with _client() as c:
+        plans = ynab.PlansApi(c).get_plans().data.plans
+    return [{"id": str(p.id), "name": p.name} for p in plans]
+
+
 async def list_budgets() -> list[dict]:
-    data = await _request("GET", "/budgets")
+    return await _call(_sync_list_budgets)
+
+
+def _sync_list_accounts(budget_id: str) -> list[dict]:
+    with _client() as c:
+        accounts = ynab.AccountsApi(c).get_accounts(budget_id).data.accounts
     return [
-        {"id": b["id"], "name": b["name"]}
-        for b in data.get("budgets", [])
+        {"id": str(a.id), "name": a.name, "closed": bool(a.closed)}
+        for a in accounts if not a.deleted
     ]
 
 
 async def list_accounts(budget_id: str) -> list[dict]:
-    data = await _request("GET", f"/budgets/{budget_id}/accounts")
-    return [
-        {"id": a["id"], "name": a["name"], "closed": a.get("closed", False)}
-        for a in data.get("accounts", [])
-        if not a.get("deleted")
-    ]
+    return await _call(_sync_list_accounts, budget_id)
+
+
+def _sync_list_categories(budget_id: str) -> list[dict]:
+    with _client() as c:
+        groups = ynab.CategoriesApi(c).get_categories(budget_id).data.category_groups
+    out = []
+    for g in groups:
+        if g.deleted or g.hidden:
+            continue
+        cats = [
+            {"id": str(cat.id), "name": cat.name}
+            for cat in g.categories if not cat.deleted and not cat.hidden
+        ]
+        if cats:
+            out.append({"id": str(g.id), "name": g.name, "categories": cats})
+    return out
 
 
 async def list_categories(budget_id: str) -> list[dict]:
-    """Return category groups with their (non-hidden, non-deleted) categories."""
-    data = await _request("GET", f"/budgets/{budget_id}/categories")
-    groups = []
-    for g in data.get("category_groups", []):
-        if g.get("deleted") or g.get("hidden"):
-            continue
-        cats = [
-            {"id": c["id"], "name": c["name"]}
-            for c in g.get("categories", [])
-            if not c.get("deleted") and not c.get("hidden")
-        ]
-        if cats:
-            groups.append({"id": g["id"], "name": g["name"], "categories": cats})
-    return groups
+    return await _call(_sync_list_categories, budget_id)
+
+
+# ── Transaction API wrappers ──────────────────────────────────────────────────
+
+def _sub_transactions(payload: dict) -> Optional[list]:
+    subs = payload.get("subtransactions")
+    if not subs:
+        return None
+    return [
+        ynab.SaveSubTransaction(amount=s["amount"], category_id=s["category_id"])
+        for s in subs
+    ]
+
+
+def _txn_kwargs(payload: dict) -> dict:
+    # Note: the SDK field is `var_date` with alias `date`; it must be populated via
+    # the alias ("date" key), not the field name.
+    return {
+        "account_id": payload["account_id"],
+        "date": datetime.date.fromisoformat(payload["date"]),
+        "amount": payload["amount"],
+        "payee_name": payload.get("payee_name"),
+        "memo": payload.get("memo"),
+        "category_id": payload.get("category_id"),
+        "cleared": ynab.TransactionClearedStatus(payload.get("cleared", "uncleared")),
+        "approved": bool(payload.get("approved", False)),
+        "subtransactions": _sub_transactions(payload),
+    }
+
+
+def _new_transaction(payload: dict) -> "ynab.NewTransaction":
+    return ynab.NewTransaction(**_txn_kwargs(payload))
+
+
+def _existing_transaction(payload: dict) -> "ynab.ExistingTransaction":
+    return ynab.ExistingTransaction(**_txn_kwargs(payload))
+
+
+def _sync_create_transaction(budget_id: str, payload: dict) -> str:
+    with _client() as c:
+        resp = ynab.TransactionsApi(c).create_transaction(
+            budget_id, ynab.PostTransactionsWrapper(transaction=_new_transaction(payload))
+        )
+    txn = resp.data.transaction
+    if txn is not None:
+        return str(txn.id)
+    ids = resp.data.transaction_ids or []
+    return str(ids[0]) if ids else ""
+
+
+async def _create_transaction(budget_id: str, payload: dict) -> str:
+    return await _call(_sync_create_transaction, budget_id, payload)
+
+
+def _sync_update_transaction(budget_id: str, txn_id: str, payload: dict) -> str:
+    with _client() as c:
+        resp = ynab.TransactionsApi(c).update_transaction(
+            budget_id, txn_id,
+            ynab.PutTransactionWrapper(transaction=_existing_transaction(payload)),
+        )
+    txn = resp.data.transaction
+    return str(txn.id) if txn is not None else txn_id
+
+
+async def _update_transaction(budget_id: str, txn_id: str, payload: dict) -> str:
+    return await _call(_sync_update_transaction, budget_id, txn_id, payload)
+
+
+def _sync_delete_transaction(budget_id: str, txn_id: str) -> None:
+    with _client() as c:
+        ynab.TransactionsApi(c).delete_transaction(budget_id, txn_id)
+
+
+async def _delete_transaction(budget_id: str, txn_id: str) -> None:
+    await _call(_sync_delete_transaction, budget_id, txn_id)
+
+
+def _sync_get_transaction(budget_id: str, txn_id: str) -> Optional[dict]:
+    with _client() as c:
+        try:
+            txn = ynab.TransactionsApi(c).get_transaction_by_id(budget_id, txn_id).data.transaction
+        except ApiException as e:
+            if getattr(e, "status", None) == 404:
+                return None
+            raise
+    return {"id": str(txn.id), "is_split": bool(txn.subtransactions)}
+
+
+async def _get_transaction(budget_id: str, txn_id: str) -> Optional[dict]:
+    return await _call(_sync_get_transaction, budget_id, txn_id)
 
 
 # ── Transaction building (pure — unit-testable without HTTP) ───────────────────
@@ -338,26 +435,34 @@ async def sync_receipt(db: aiosqlite.Connection, receipt_id: int) -> dict:
 
     budget_id = cfg["budget_id"]
     existing_txn = receipt.get("ynab_transaction_id")
+    new_is_split = "subtransactions" in payload
 
     try:
-        if existing_txn:
-            data = await _request(
-                "PUT",
-                f"/budgets/{budget_id}/transactions/{existing_txn}",
-                json={"transaction": payload},
-            )
+        if not existing_txn:
+            txn_id = await _create_transaction(budget_id, payload)
         else:
-            data = await _request(
-                "POST",
-                f"/budgets/{budget_id}/transactions",
-                json={"transaction": payload},
-            )
+            existing = await _get_transaction(budget_id, existing_txn)
+            if existing is None:
+                # Transaction no longer exists in YNAB — create a fresh one.
+                txn_id = await _create_transaction(budget_id, payload)
+            elif new_is_split or existing["is_split"]:
+                # YNAB ignores edits to a split transaction's date/amount/category
+                # and cannot alter its subtransactions, so delete and recreate to
+                # reflect the current receipt. Clear the stored id first so a failed
+                # create doesn't leave a dangling reference to the deleted txn.
+                await _delete_transaction(budget_id, existing_txn)
+                await db.execute(
+                    "UPDATE receipts SET ynab_transaction_id = NULL WHERE id = ?",
+                    (receipt_id,),
+                )
+                await db.commit()
+                txn_id = await _create_transaction(budget_id, payload)
+            else:
+                # Single-category transaction — update in place (preserves any match).
+                txn_id = await _update_transaction(budget_id, existing_txn, payload)
     except YnabError:
         await _set_sync_status(db, receipt_id, "failed")
         raise
 
-    txn = data.get("transaction") or {}
-    txn_id = txn.get("id") or (data.get("transaction_ids") or [existing_txn])[0]
     await _set_sync_status(db, receipt_id, "synced", transaction_id=txn_id)
-
-    return {"status": "synced", "transaction_id": txn_id, "split": "subtransactions" in payload}
+    return {"status": "synced", "transaction_id": txn_id, "split": new_is_split}

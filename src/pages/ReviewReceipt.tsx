@@ -342,12 +342,12 @@ export function ReviewReceipt({
                       onChange={e => setStoreName(e.target.value)}
                       placeholder="Store name"
                       title="Click to edit store name"
-                      className="text-lg font-semibold text-gray-900 leading-tight w-full truncate cursor-text
-                                 bg-transparent rounded-md pl-2 pr-7 py-0.5 -ml-2 border border-transparent transition-colors
+                      className="block text-lg font-semibold text-gray-900 leading-tight w-full truncate cursor-text
+                                 bg-transparent rounded-md pl-2 pr-7 py-1 -ml-2 border border-transparent transition-colors
                                  hover:border-gray-200 hover:bg-gray-50
                                  focus:bg-white focus:border-[#03a9f4] focus:ring-2 focus:ring-[#03a9f4]/20 outline-none"
                     />
-                    <Pencil className="w-3.5 h-3.5 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover/store:opacity-100 transition-opacity" />
+                    <Pencil className="w-3.5 h-3.5 text-gray-400 absolute right-2 inset-y-0 my-auto pointer-events-none opacity-0 group-hover/store:opacity-100 transition-opacity" />
                   </div>
                 )}
               </div>

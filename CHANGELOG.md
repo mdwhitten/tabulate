@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Transactions are created unapproved and uncleared with no `import_id`, so YNAB automatically matches them to the bank feed when the real charge imports later.
 - Added `.env.example` and documented `YNAB_API_TOKEN`, `LOG_LEVEL`, and `CORS_ORIGINS` in the README.
 
+### Changed
+- The YNAB integration now uses the official `ynab` Python SDK instead of hand-rolled HTTP calls.
+
 ### Fixed
+- Re-syncing an edited receipt now reflects the changes. The YNAB API can't update a split transaction (date/amount/category edits are ignored and subtransactions can't be changed), so split transactions are deleted and recreated; single-category transactions are updated in place, preserving any existing YNAB match.
 - Manual total entry: typing a multi-digit total (e.g. "300") no longer commits the first digit and clears the field — the value is now committed on blur/Enter.
-- The receipt store-name field now shows a clear hover/focus affordance (and a pencil icon) so it reads as editable.
+- The receipt store-name field now shows a clear hover/focus affordance (and a correctly-aligned pencil icon) so it reads as editable.
 
 ## [1.6.0] - 2026-07-13
 
