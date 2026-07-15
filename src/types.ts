@@ -31,8 +31,8 @@ export interface Receipt {
   ocr_raw: string | null
   image_path: string | null
   thumbnail_path: string | null
-  ynab_sync_status: string | null
-  ynab_transaction_id: string | null
+  ynab_sync_status?: string | null
+  ynab_transaction_id?: string | null
   items: LineItem[]
 }
 
