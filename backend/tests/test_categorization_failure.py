@@ -6,10 +6,16 @@ Covers:
   - categorize_items returning (results, categorization_failed=False) on success
   - categorize_items returning False when all items are learned (no API call)
   - CategorizationError raised by _call_claude on API error / missing key
+  - _call_claude structured output (schema enum, text block read by type,
+    thinking block first) and id-based matching of its results
+  - stage 2: the category Claude assigned while reading the receipt
   - POST /api/receipts/{id}/recategorize endpoint
 """
+import json
 import os
 import sys
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import patch, AsyncMock
 
@@ -170,6 +176,164 @@ class TestCallClaudeRaisesError:
                         return_value=mock_client):
                 with pytest.raises(CategorizationError, match="Connection refused"):
                     await _call_claude(items, "Store", db)
+
+
+class TestCallClaudeStructuredOutput:
+
+    def _message(self, payload, stop_reason="end_turn"):
+        return SimpleNamespace(
+            stop_reason=stop_reason,
+            content=[
+                # Haiku 5.5 thinks by default: a thinking block comes first.
+                SimpleNamespace(type="thinking", thinking="", signature="sig"),
+                SimpleNamespace(type="text", text=json.dumps(payload)),
+            ],
+        )
+
+    async def _call(self, db, message, items=None):
+        from services.categorize_service import _call_claude
+
+        items = items or [{"id": 0, "raw_name": "KALE", "clean_name": "Kale"}]
+        mock_client = AsyncMock()
+        mock_client.messages.create.return_value = message
+        with patch("services.categorize_service.ANTHROPIC_API_KEY", "sk-test-key"), \
+             patch("services.categorize_service.anthropic.AsyncAnthropic", return_value=mock_client):
+            result = await _call_claude(items, "Store", db)
+        return result, mock_client.messages.create.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_returns_items_list_and_reads_text_block_by_type(self, db, monkeypatch):
+        monkeypatch.delenv("CLAUDE_MODEL", raising=False)
+        monkeypatch.delenv("CLAUDE_EFFORT", raising=False)
+        payload = {"items": [{"id": 0, "category": "Produce", "confidence": 0.9}]}
+        result, kwargs = await self._call(db, self._message(payload))
+
+        assert result == payload["items"]
+        assert kwargs["model"] == "claude-haiku-5-5"
+        assert kwargs["output_config"]["effort"] == "low"
+        fmt = kwargs["output_config"]["format"]
+        assert fmt["type"] == "json_schema"
+        enum = fmt["schema"]["properties"]["items"]["items"]["properties"]["category"]["enum"]
+        assert "Produce" in enum and "Other" in enum
+        for param in ("temperature", "top_p", "top_k"):
+            assert param not in kwargs
+        sent = json.loads(kwargs["messages"][0]["content"])
+        assert sent == {"store": "Store", "items": [{"id": 0, "name": "Kale"}]}
+
+    @pytest.mark.asyncio
+    async def test_schema_enum_excludes_disabled_categories(self, db):
+        await db.execute("UPDATE categories SET is_disabled = 1 WHERE name = 'Snacks'")
+        await db.commit()
+        _, kwargs = await self._call(db, self._message({"items": []}))
+        enum = kwargs["output_config"]["format"]["schema"]["properties"]["items"]["items"]["properties"]["category"]["enum"]
+        assert "Snacks" not in enum
+
+    @pytest.mark.asyncio
+    async def test_model_and_effort_from_env(self, db, monkeypatch):
+        monkeypatch.setenv("CLAUDE_MODEL", "claude-sonnet-5-5")
+        monkeypatch.setenv("CLAUDE_EFFORT", "medium")
+        _, kwargs = await self._call(db, self._message({"items": []}))
+        assert kwargs["model"] == "claude-sonnet-5-5"
+        assert kwargs["output_config"]["effort"] == "medium"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_reason", ["refusal", "max_tokens"])
+    async def test_early_stop_raises(self, db, stop_reason):
+        with pytest.raises(CategorizationError, match=stop_reason):
+            await self._call(db, self._message({"items": []}, stop_reason=stop_reason))
+
+    @pytest.mark.asyncio
+    async def test_no_text_block_raises(self, db):
+        msg = SimpleNamespace(stop_reason="end_turn",
+                              content=[SimpleNamespace(type="thinking", thinking="", signature="s")])
+        with pytest.raises(CategorizationError, match="no text"):
+            await self._call(db, msg)
+
+
+class TestIdBasedMatching:
+
+    ITEMS = [
+        {"id": 0, "raw_name": "KALE", "clean_name": "Kale", "price": 3.99, "quantity": 1},
+        {"id": 1, "raw_name": "SALMON", "clean_name": "Salmon", "price": 12.99, "quantity": 1},
+        {"id": 2, "raw_name": "SOAP", "clean_name": "Soap", "price": 2.49, "quantity": 1},
+    ]
+
+    @pytest.mark.asyncio
+    async def test_reordered_results_matched_by_id(self, db):
+        ai = [
+            {"id": 2, "category": "Household", "confidence": 0.8},
+            {"id": 0, "category": "Produce", "confidence": 0.9},
+            {"id": 1, "category": "Meat & Seafood", "confidence": 0.95},
+        ]
+        with patch("services.categorize_service._call_claude", new_callable=AsyncMock, return_value=ai):
+            results, failed = await categorize_items(self.ITEMS, "Store", db)
+        assert failed is False
+        assert [(r["raw_name"], r["category"]) for r in results] == [
+            ("KALE", "Produce"), ("SALMON", "Meat & Seafood"), ("SOAP", "Household"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_missing_result_defaults_to_other(self, db):
+        ai = [{"id": 0, "category": "Produce", "confidence": 0.9},
+              {"id": 2, "category": "Household", "confidence": 0.8}]
+        with patch("services.categorize_service._call_claude", new_callable=AsyncMock, return_value=ai):
+            results, _ = await categorize_items(self.ITEMS, "Store", db)
+        salmon = next(r for r in results if r["raw_name"] == "SALMON")
+        assert salmon["category"] == "Other"
+        assert salmon["ai_confidence"] == 0.0
+        soap = next(r for r in results if r["raw_name"] == "SOAP")
+        assert soap["category"] == "Household"
+
+
+class TestInlineAiCategory:
+    """Stage 2: the category Claude assigned while reading the receipt."""
+
+    @pytest.mark.asyncio
+    async def test_valid_hint_used_without_api_call(self, db):
+        from services.categorize_service import INLINE_AI_CONFIDENCE
+
+        items = [{"id": 0, "raw_name": "KALE", "clean_name": "Kale", "price": 3.99,
+                  "quantity": 1, "category": "Produce"}]
+        with patch("services.categorize_service._call_claude", new_callable=AsyncMock) as mock_claude:
+            results, failed = await categorize_items(items, "Store", db)
+            mock_claude.assert_not_called()
+        assert failed is False
+        assert results[0]["category"] == "Produce"
+        assert results[0]["category_source"] == "ai"
+        assert results[0]["ai_confidence"] == INLINE_AI_CONFIDENCE
+
+    @pytest.mark.asyncio
+    async def test_learned_mapping_beats_hint(self, db):
+        await save_mapping(db, "KALE", "Pantry", source="manual")
+        await db.commit()
+        items = [{"id": 0, "raw_name": "KALE", "clean_name": "Kale", "price": 3.99,
+                  "quantity": 1, "category": "Produce"}]
+        with patch("services.categorize_service._call_claude", new_callable=AsyncMock) as mock_claude:
+            results, _ = await categorize_items(items, "Store", db)
+            mock_claude.assert_not_called()
+        assert results[0]["category"] == "Pantry"
+        assert results[0]["category_source"] == "learned"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("hint", ["Not A Category", "Snacks", None])
+    async def test_invalid_or_disabled_hint_falls_through(self, db, hint):
+        await db.execute("UPDATE categories SET is_disabled = 1 WHERE name = 'Snacks'")
+        await db.commit()
+        items = [
+            {"id": 0, "raw_name": "CHIPS", "clean_name": "Chips", "price": 3.49,
+             "quantity": 1, "category": hint},
+            {"id": 1, "raw_name": "KALE", "clean_name": "Kale", "price": 3.99,
+             "quantity": 1, "category": "Produce"},
+        ]
+        ai = [{"id": 0, "category": "Pantry", "confidence": 0.7}]
+        with patch("services.categorize_service._call_claude", new_callable=AsyncMock,
+                   return_value=ai) as mock_claude:
+            results, failed = await categorize_items(items, "Store", db)
+        # Only the item without a usable hint goes to Claude
+        sent = mock_claude.call_args.args[0]
+        assert [i["id"] for i in sent] == [0]
+        assert failed is False
+        assert [(r["id"], r["category"]) for r in results] == [(0, "Pantry"), (1, "Produce")]
 
 
 # ── POST /api/receipts/{id}/recategorize ─────────────────────────────────────

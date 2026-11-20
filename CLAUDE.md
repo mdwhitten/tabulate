@@ -7,7 +7,7 @@ Self-hosted grocery receipt tracker. React 19 + TypeScript + Vite + Tailwind CSS
 - **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS 4 (no build step for TW)
 - **State**: TanStack React Query v5 — all server state goes through hooks
 - **Backend**: FastAPI + Python 3.12 + SQLite (aiosqlite)
-- **OCR**: Tesseract (text) → Claude Vision claude-haiku-4-5 (enrichment)
+- **Extraction**: AI-first — one Claude call (default `claude-haiku-5-5`, see `CLAUDE_MODEL`) reads the full-resolution image and returns schema-constrained JSON with a category per item; Tesseract + regex is only the fallback (no API key / AI failure)
 - **Container**: Docker Compose — nginx (serves Vite build) + uvicorn (backend)
 
 ## Project Structure
@@ -86,6 +86,11 @@ Each hooks file exports a `*Keys` object (e.g. `receiptKeys`, `categoryKeys`) us
 | `SaveReceiptBody` | `items[]`, `status`, `store_name?` |
 | `ItemMapping` | `source` field (NOT `category_source`) |
 
+`POST /api/receipts/upload-stream` takes the same form fields as `/upload` but returns NDJSON (`application/x-ndjson`), one JSON object per line:
+- `{"type":"progress","stage":...}` — stages in order: `preparing`, `reading` (`method: "ai"`, then repeated with `items: N` as items stream in; `method: "ocr"` if it falls back to Tesseract), `rechecking` (`problems: N`, only when totals don't reconcile), `checking`, `categorizing`, `saving`
+- then exactly one `{"type":"result","data":<ProcessingResult>}` or `{"type":"error","status":<int>,"detail":<str>}`
+- Validation errors (unsupported type, too large, missing file) are normal 4xx JSON responses before streaming starts
+
 ## Testing
 
 Before pushing any changes:
@@ -111,7 +116,10 @@ Do not push if any tests fail or TypeScript has errors. Fix the issue first.
 - Frontend changes require `docker compose build nginx && docker compose up nginx` to rebuild
 - Dev frontend changes are instant via Vite HMR at `localhost:5173`
 - SQLite `PRAGMA foreign_keys = ON` is set in `get_db()` — required for ON DELETE CASCADE
-- Two-pass OCR: Tesseract extracts text → `parse_receipt_with_vision()` enriches with Claude Vision
+- AI-first extraction: `services/receipt_ai.extract_receipt_with_ai()` splits tall receipts into overlapping segments, asks Claude for JSON (store, date, totals, items + category), reconciles totals in code and makes one corrective follow-up turn on a mismatch; it returns `None` (→ Tesseract `parse_receipt_text()` fallback) when there is no key or the call fails
+- Claude calls: read text blocks by `.type == "text"` (thinking blocks can come first), never send `temperature`/`top_p`/`top_k`
+- Processing uses the full-resolution image; stored copies are width-capped by `downscale_for_storage()`
+- `python backend/scripts/eval_receipt.py receipt.pdf --expect-total 228.21 --expect-items 76` evaluates the real extraction on a file (needs `ANTHROPIC_API_KEY`; billed)
 
 ## Releasing
 
@@ -135,7 +143,10 @@ This repo handles ingress compatibility directly:
 ## Environment
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...   # Required for Claude Vision
-DB_PATH=/data/tabulate.db      # Optional, defaults shown
-IMAGE_DIR=/data/images         # Optional, defaults shown
+ANTHROPIC_API_KEY=sk-ant-...      # Required for Claude extraction (Tesseract-only without it)
+CLAUDE_MODEL=claude-haiku-5-5     # Optional, defaults shown
+CLAUDE_EFFORT=low                 # Optional: low | medium | high | xhigh | max
+STORED_IMAGE_MAX_WIDTH=1200       # Optional: max width (px) of stored receipt images
+DB_PATH=/data/tabulate.db         # Optional, defaults shown
+IMAGE_DIR=/data/images            # Optional, defaults shown
 ```

@@ -16,6 +16,9 @@ services:
     environment:
       - DB_PATH=/data/tabulate.db
       - IMAGE_DIR=/data/images
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-haiku-5-5}
+      - CLAUDE_EFFORT=${CLAUDE_EFFORT:-low}
+      - STORED_IMAGE_MAX_WIDTH=${STORED_IMAGE_MAX_WIDTH:-1200}
     volumes:
       - tabulate-data:/data
       - ./backend:/app             # live reload during development

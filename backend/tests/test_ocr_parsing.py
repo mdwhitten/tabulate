@@ -5,14 +5,14 @@ Covers:
 - parse_receipt_text: regex-based line item extraction for standard, Costco, and H-E-B formats
 - verify_total: receipt total verification against extracted items
 - _detect_store_from_text: keyword-based store name detection
-- _prepare_image_for_vision: magic-byte media type detection
+- TOTAL_RE: total-line detection (incl. letter-spaced and AMOUNT DUE variants)
 """
 import pytest
 from services.ocr_service import (
     parse_receipt_text,
     verify_total,
     _detect_store_from_text,
-    _prepare_image_for_vision,
+    TOTAL_RE,
     ParsedReceipt,
 )
 
@@ -287,34 +287,36 @@ class TestVerifyTotal:
         assert p.subtotal == 8.00
 
 
-# ── _prepare_image_for_vision — magic bytes ──────────────────────────────────
+# ── TOTAL_RE ─────────────────────────────────────────────────────────────────
 
-class TestPrepareImageMagicBytes:
+class TestTotalRegex:
 
-    def test_jpeg_detected(self):
-        # JPEG magic bytes + some padding
-        data = b'\xff\xd8\xff\xe0' + b'\x00' * 100
-        _, media_type = _prepare_image_for_vision(data)
-        assert media_type == "image/jpeg"
+    def _total(self, line):
+        m = TOTAL_RE.search(line)
+        return m.group(1) if m else None
 
-    def test_png_detected(self):
-        data = b'\x89PNG' + b'\x00' * 100
-        _, media_type = _prepare_image_for_vision(data)
-        # May return jpeg after conversion, or the original type
-        assert media_type in ("image/png", "image/jpeg")
+    def test_plain_total(self):
+        assert self._total("TOTAL $228.21") == "228.21"
 
-    def test_tiff_detected(self):
-        data = b'MM\x00\x2a' + b'\x00' * 100
-        _, media_type = _prepare_image_for_vision(data)
-        assert media_type in ("image/tiff", "image/jpeg")
+    def test_letter_spaced_total(self):
+        """Aldi prints the total letter-spaced: "T O T A L"."""
+        assert self._total("T O T A L $ 228.21") == "228.21"
 
-    def test_pdf_returns_early(self):
-        data = b'%PDF-1.4' + b'\x00' * 100
-        returned_bytes, media_type = _prepare_image_for_vision(data)
-        assert media_type == "application/pdf"
-        assert returned_bytes == data
+    def test_letter_spaced_total_lowercase(self):
+        assert self._total("t o t a l 12.00") == "12.00"
 
-    def test_unknown_defaults_to_jpeg(self):
-        data = b'\x00\x00\x00\x00' + b'\x00' * 100
-        _, media_type = _prepare_image_for_vision(data)
-        assert media_type == "image/jpeg"
+    def test_amount_due(self):
+        assert self._total("AMOUNT DUE 228.21") == "228.21"
+
+    def test_amount_due_with_colon(self):
+        assert self._total("Amount Due: $14.07") == "14.07"
+
+    def test_costco_amount_colon(self):
+        assert self._total("AMOUNT: $54.10") == "54.10"
+
+    def test_non_total_line(self):
+        assert self._total("BANANAS 1.50") is None
+
+    def test_letter_spaced_total_parsed_from_receipt(self):
+        text = "ALDI\nBANANAS 1.50\nMILK 3.00\nT O T A L $ 4.50\n"
+        assert parse_receipt_text(text).total == 4.50

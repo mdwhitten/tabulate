@@ -1,10 +1,11 @@
 """
 Categorization Service
 
-Two-stage approach:
+Three-stage approach:
   1. Check the learned item_mappings table first (fast, zero API cost)
-  2. For unknown items, call Claude API in a single batched request
-     and persist the results back to the DB for next time.
+  2. Use the category Claude already assigned while reading the receipt
+     (services.receipt_ai), when it is one of the enabled categories
+  3. For anything still unknown, call Claude in a single batched request
 
 Categories are fully dynamic — fetched from the `categories` table so
 user-created custom categories work exactly like built-ins.
@@ -18,8 +19,13 @@ from typing import Optional
 import anthropic
 import aiosqlite
 
+from services.receipt_ai import get_effort, get_model
+
 logger = logging.getLogger("tabulate.categorize")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# Confidence recorded for categories Claude assigned while reading the receipt.
+INLINE_AI_CONFIDENCE = 0.85
 
 
 class CategorizationError(Exception):
@@ -52,10 +58,10 @@ Rules:
 - Use only the listed category names, spelled exactly as shown.
 - Base your decision on the item name and store context.
 - When unsure, prefer a specific category over "Other".
-- Return ONLY a JSON array. No prose, no markdown fences.
+- confidence is your certainty from 0.0 to 1.0.
 
-Input format: JSON array of objects with "id" and "name" fields, plus optional "store".
-Output format: JSON array of objects with "id", "category", and "confidence" (0.0–1.0).
+Input: the store name and a list of items, each with an "id" and a "name".
+Return one result per input item, with the same "id".
 """
 
 
@@ -192,17 +198,39 @@ async def categorize_items(
         else:
             unknown.append(item)
 
-    # Stage 2 — Claude API for unknown items
+    # Stage 2 — category assigned by Claude while reading the receipt
+    if unknown:
+        valid = set(await get_categories(db))
+        still_unknown = []
+        for item in unknown:
+            if item.get("category") in valid:
+                results.append({
+                    **item,
+                    "category_source": "ai",
+                    "ai_confidence": INLINE_AI_CONFIDENCE,
+                })
+            else:
+                still_unknown.append(item)
+        unknown = still_unknown
+
+    # Stage 3 — one batched Claude call for whatever is left
     if unknown:
         try:
             ai_results = await _call_claude(unknown, store_name, db)
         except CategorizationError:
             categorization_failed = True
-            ai_results = [{"id": i["id"], "category": "Other", "confidence": 0.0} for i in unknown]
+            ai_results = []
 
-        for item, ai in zip(unknown, ai_results):
-            category = ai.get("category", "Other")
-            confidence = float(ai.get("confidence", 0.7))
+        # Match by id, never by position: a dropped or reordered result must
+        # not shift categories onto the wrong items.
+        by_id = {r.get("id"): r for r in ai_results if isinstance(r, dict)}
+        for item in unknown:
+            ai = by_id.get(item["id"])
+            if ai is None:
+                category, confidence = "Other", 0.0
+            else:
+                category = ai.get("category", "Other")
+                confidence = float(ai.get("confidence", 0.7))
 
             results.append({
                 **item,
@@ -231,29 +259,58 @@ async def _call_claude(items: list[dict], store_name: str, db: aiosqlite.Connect
         logger.warning("ANTHROPIC_API_KEY not set — skipping AI categorization")
         raise CategorizationError("ANTHROPIC_API_KEY not set")
 
+    categories = await get_categories(db)
     system_prompt = await _build_system_prompt(db)
-    payload = [
-        {"id": item["id"], "name": item.get("clean_name") or item["raw_name"], "store": store_name}
-        for item in items
-    ]
+    payload = {
+        "store": store_name,
+        "items": [
+            {"id": item["id"], "name": item.get("clean_name") or item["raw_name"]}
+            for item in items
+        ],
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "category": {"type": "string", "enum": categories},
+                        "confidence": {"type": "number"},
+                    },
+                    "required": ["id", "category", "confidence"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
 
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     try:
         message = await client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=1024,
+            model=get_model(),
+            max_tokens=16000,
             system=system_prompt,
+            output_config={"effort": get_effort(), "format": {"type": "json_schema", "schema": schema}},
             messages=[{"role": "user", "content": json.dumps(payload)}],
         )
-        raw = message.content[0].text.strip()
-        raw = re.sub(r'^```[a-z]*\n?', '', raw)
-        raw = re.sub(r'\n?```$', '', raw)
-        return json.loads(raw)
+        if message.stop_reason in ("refusal", "max_tokens"):
+            raise CategorizationError(f"Categorization stopped early ({message.stop_reason})")
+        text = next((b.text for b in message.content if b.type == "text"), None)
+        if text is None:
+            raise CategorizationError("Categorization response had no text")
+        return json.loads(text)["items"]
     except CategorizationError:
         raise
     except Exception as e:
         logger.error("Claude API error: %s", e)
         raise CategorizationError(str(e)) from e
+    finally:
+        await client.close()
 
 
 async def apply_manual_correction(

@@ -67,6 +67,48 @@ def generate_thumbnail(image_bytes: bytes, out_path: str) -> str | None:
         return None
 
 
+# Stored receipt images are capped by WIDTH, not by long side: receipts are
+# tall and narrow, so a long-side cap would make long receipts unreadable.
+# Processing (Claude / Tesseract) always uses the full-resolution upload.
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r", name, os.environ.get(name))
+        return default
+    return value if value > 0 else default
+
+
+STORED_MAX_WIDTH = _env_int("STORED_IMAGE_MAX_WIDTH", 1200)
+STORED_QUALITY = 85
+
+
+def downscale_for_storage(image_bytes: bytes, max_width: int | None = None) -> bytes:
+    """Return a JPEG no wider than max_width (default STORED_MAX_WIDTH) for
+    long-term storage. Images already within the limit are returned unchanged;
+    on any failure the input bytes are returned."""
+    max_width = max_width or STORED_MAX_WIDTH
+    if not _AVAILABLE:
+        return image_bytes
+    try:
+        img = _open_corrected(image_bytes)
+        w, h = img.size
+        if w <= max_width:
+            return image_bytes
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        scale = max_width / w
+        img = img.resize((max_width, max(1, int(h * scale))), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=STORED_QUALITY, optimize=True)
+        out = buf.getvalue()
+        logger.debug("Stored image %d KB → %d KB", len(image_bytes) // 1024, len(out) // 1024)
+        return out
+    except Exception as e:
+        logger.warning("Storage downscale failed, keeping original bytes: %s", e)
+        return image_bytes
+
+
 # ── Edge Detection ─────────────────────────────────────────────────────────────
 
 def detect_receipt_edges(image_bytes: bytes) -> list[list[float]] | None:

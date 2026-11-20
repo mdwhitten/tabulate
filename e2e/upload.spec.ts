@@ -25,24 +25,93 @@ function processingResult(id: number) {
   }
 }
 
+const ndjson = (events: unknown[]) => events.map(e => JSON.stringify(e)).join('\n') + '\n'
+
+/** A full NDJSON progress stream ending with the processing result. */
+function uploadStreamBody(id: number) {
+  return ndjson([
+    { type: 'progress', stage: 'preparing' },
+    { type: 'progress', stage: 'reading', method: 'ai' },
+    { type: 'progress', stage: 'reading', method: 'ai', items: 2 },
+    { type: 'progress', stage: 'checking' },
+    { type: 'progress', stage: 'categorizing' },
+    { type: 'progress', stage: 'saving' },
+    { type: 'result', data: processingResult(id) },
+  ])
+}
+
 /**
- * Mock the upload endpoint (distinct receipt per call) and block the vendored
- * OpenCV/jscanify scripts so the client scanner fails fast and the flow falls
- * back to uploading the original image — deterministic in headless.
+ * Block the vendored OpenCV/jscanify scripts so the client scanner fails fast
+ * and the flow falls back to uploading the original image — deterministic in
+ * headless — and mock edge detection.
  */
-async function mockUploadFlow(page: Page) {
-  let nextId = 1001
+async function mockScanner(page: Page) {
   await page.route('**/vendor/opencv.js', route => route.abort())
   await page.route('**/vendor/jscanify.js', route => route.abort())
   await page.route('**/api/receipts/detect-edges-raw', route =>
     route.fulfill({ json: { corners: [[0.05, 0.05], [0.95, 0.05], [0.95, 0.95], [0.05, 0.95]] } }),
   )
-  await page.route('**/api/receipts/upload', route =>
-    route.fulfill({ json: processingResult(nextId++) }),
+}
+
+/** Mock the streaming upload endpoint (distinct receipt per call). */
+async function mockUploadFlow(page: Page) {
+  let nextId = 1001
+  await mockScanner(page)
+  await page.route('**/api/receipts/upload-stream', route =>
+    route.fulfill({ contentType: 'application/x-ndjson', body: uploadStreamBody(nextId++) }),
   )
 }
 
+/**
+ * Playwright's route.fulfill delivers a body all at once, so to observe live
+ * progress we replace fetch for the upload-stream URL with a ReadableStream the
+ * test pushes NDJSON lines into via `pushUploadLine`.
+ */
+// Shape of the page globals the controllable stream shim uses. (The e2e
+// tsconfig has no DOM lib, so this goes through globalThis.)
+type StreamGlobals = {
+  __uploadStream?: ReadableStreamDefaultController<Uint8Array>
+  fetch: typeof fetch
+}
+
+async function mockControllableUploadStream(page: Page) {
+  await mockScanner(page)
+  await page.addInitScript(() => {
+    const g = globalThis as unknown as StreamGlobals
+    const realFetch = g.fetch.bind(g)
+    g.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url.includes('/api/receipts/upload-stream')) {
+        const body = new ReadableStream<Uint8Array>({ start(c) { g.__uploadStream = c } })
+        return Promise.resolve(new Response(body, { headers: { 'Content-Type': 'application/x-ndjson' } }))
+      }
+      return realFetch(input, init)
+    }
+  })
+}
+
+async function pushUploadLine(page: Page, event: unknown, close = false) {
+  await page.waitForFunction(() => !!(globalThis as unknown as StreamGlobals).__uploadStream)
+  await page.evaluate(([line, end]) => {
+    const c = (globalThis as unknown as StreamGlobals).__uploadStream!
+    c.enqueue(new TextEncoder().encode(line))
+    if (end) c.close()
+  }, [JSON.stringify(event) + '\n', close] as const)
+}
+
+/** Open the modal, queue one image and skip the crop step to start uploading. */
+async function startSingleUpload(page: Page) {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Scan Receipt' }).first().click()
+  await page.locator('input[type="file"][multiple]').setInputFiles([
+    { name: 'only.png', mimeType: 'image/png', buffer: PNG },
+  ])
+  await page.getByRole('button', { name: /Process 1 receipt/ }).click()
+  await page.getByRole('button', { name: /Skip — Use Full Image/ }).click()
+}
+
 test.describe('Upload flow', () => {
+  // eslint-disable-next-line no-empty-pattern -- Playwright requires a destructured fixtures arg
   test.beforeEach(({}, testInfo) => {
     test.skip(testInfo.project.name !== 'chromium', 'desktop-only flow')
   })
@@ -100,5 +169,65 @@ test.describe('Upload flow', () => {
     // Lands on review with no batch indicator.
     await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
     await expect(page.getByText(/\d+ of \d+/)).toHaveCount(0)
+  })
+
+  test('single upload shows real progress streamed from the server', async ({ page }) => {
+    await mockControllableUploadStream(page)
+    await startSingleUpload(page)
+
+    const steps = page.getByTestId('processing-steps')
+    const active = steps.locator('[aria-current="step"]')
+
+    // Nothing streamed yet: still uploading.
+    await expect(active).toContainText('Uploading image')
+
+    await pushUploadLine(page, { type: 'progress', stage: 'preparing' })
+    await expect(active).toContainText('Preparing image')
+
+    await pushUploadLine(page, { type: 'progress', stage: 'reading', method: 'ai' })
+    await expect(active).toContainText('Reading receipt with AI')
+
+    await pushUploadLine(page, { type: 'progress', stage: 'reading', method: 'ai', items: 23 })
+    await expect(active).toContainText('23 items found')
+
+    await pushUploadLine(page, { type: 'progress', stage: 'rechecking', problems: 1 })
+    await expect(active).toContainText('Double-checking totals…')
+
+    // Unknown stages are ignored.
+    await pushUploadLine(page, { type: 'progress', stage: 'warp-drive' })
+    await expect(active).toContainText('Double-checking totals…')
+
+    await pushUploadLine(page, { type: 'progress', stage: 'categorizing' })
+    await expect(active).toContainText('Categorizing & saving')
+
+    await pushUploadLine(page, { type: 'result', data: processingResult(2001) }, true)
+    await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
+  })
+
+  test('single upload labels the OCR fallback', async ({ page }) => {
+    await mockControllableUploadStream(page)
+    await startSingleUpload(page)
+
+    await pushUploadLine(page, { type: 'progress', stage: 'preparing' })
+    await pushUploadLine(page, { type: 'progress', stage: 'reading', method: 'ocr' })
+    await expect(page.getByTestId('processing-steps').locator('[aria-current="step"]'))
+      .toContainText('Reading receipt (OCR)')
+  })
+
+  test('a streamed error event shows the message and returns to the picker', async ({ page }) => {
+    await mockScanner(page)
+    await page.route('**/api/receipts/upload-stream', route =>
+      route.fulfill({
+        contentType: 'application/x-ndjson',
+        body: ndjson([
+          { type: 'progress', stage: 'preparing' },
+          { type: 'error', status: 422, detail: 'Could not read receipt' },
+        ]),
+      }),
+    )
+    await startSingleUpload(page)
+
+    await expect(page.getByText('Upload failed: Could not read receipt')).toBeVisible()
+    await expect(page.getByRole('button', { name: /Process 1 receipt/ })).toBeVisible()
   })
 })

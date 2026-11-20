@@ -1,11 +1,13 @@
 import { apiFetch, apiUrl } from './client'
+import { splitNdjson, flushNdjson } from '../lib/ndjson'
 import type { Receipt, ReceiptSummary, SaveReceiptBody, DuplicateMatch } from '../types'
 
 export interface ProcessingResult {
   receipt_id: number
   store_name: string
   receipt_date: string | null
-  ocr_raw: string
+  /** Raw OCR text; null when the receipt was read by Claude Vision directly. */
+  ocr_raw: string | null
   subtotal: number | null
   tax: number | null
   discounts: number
@@ -25,10 +27,38 @@ export async function getReceipt(id: number): Promise<Receipt> {
   return apiFetch<Receipt>(`/receipts/${id}`)
 }
 
+/**
+ * A progress event streamed by POST /receipts/upload-stream. Stages the UI
+ * doesn't know about (and extra fields) must be tolerated.
+ */
+export interface UploadProgressEvent {
+  type: 'progress'
+  stage: 'preparing' | 'reading' | 'rechecking' | 'checking' | 'categorizing' | 'saving' | (string & {})
+  /** For `reading`: 'ai' (Claude Vision) or 'ocr' (Tesseract fallback). */
+  method?: string
+  /** For `reading` with method 'ai': items found so far. */
+  items?: number
+  /** For `rechecking`: number of problems that triggered the re-check. */
+  problems?: number
+}
+
+type UploadStreamEvent =
+  | UploadProgressEvent
+  | { type: 'result'; data: ProcessingResult }
+  | { type: 'error'; status?: number; detail?: string }
+
+/**
+ * Upload a receipt and process it, streaming progress.
+ *
+ * The server replies with NDJSON: zero or more `progress` events followed by
+ * a final `result` (resolved) or `error` (thrown). Validation failures come
+ * back as an ordinary non-2xx JSON response before any streaming.
+ */
 export async function uploadReceipt(
   file: File | Blob,
   cropCorners?: [number, number][] | null,
   original?: File | Blob | null,
+  onProgress?: (event: UploadProgressEvent) => void,
 ): Promise<ProcessingResult> {
   const form = new FormData()
   // A client-side perspective-corrected scan arrives as a Blob (no name).
@@ -42,13 +72,73 @@ export async function uploadReceipt(
   if (original) {
     form.append('original', original, original instanceof File ? original.name : 'original.jpg')
   }
-  const res = await fetch(apiUrl('/receipts/upload'), { method: 'POST', body: form })
+  const res = await fetch(apiUrl('/receipts/upload-stream'), { method: 'POST', body: form })
   if (!res.ok) {
     let detail = res.statusText
     try { const b = await res.json(); detail = b.detail ?? detail } catch { /* ignore */ }
     throw new Error(`Upload failed: ${detail}`)
   }
-  return res.json() as Promise<ProcessingResult>
+
+  // Held in an object so assignments inside the line handler stay visible to TS.
+  const outcome: { result?: ProcessingResult; error?: string } = {}
+
+  // Returns true once a terminal (result / error) event has been seen.
+  const handleLine = (line: string): boolean => {
+    let event: UploadStreamEvent
+    try {
+      event = JSON.parse(line) as UploadStreamEvent
+    } catch {
+      console.warn('Ignoring malformed upload-stream line:', line)
+      return false
+    }
+    if (!event || typeof event !== 'object') return false
+    if (event.type === 'progress') {
+      if (typeof event.stage === 'string') onProgress?.(event)
+      return false
+    }
+    if (event.type === 'result') {
+      outcome.result = event.data
+      return true
+    }
+    if (event.type === 'error') {
+      outcome.error = event.detail || (event.status ? `HTTP ${event.status}` : 'unknown error')
+      return true
+    }
+    return false   // unknown event type — ignore
+  }
+
+  const consume = (lines: string[]): boolean => lines.some(handleLine)
+
+  if (res.body) {
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let rest = ''
+    let finished = false
+    try {
+      while (!finished) {
+        const { value, done } = await reader.read()
+        if (done) {
+          const tail = splitNdjson(rest, decoder.decode())
+          finished = consume([...tail.lines, ...flushNdjson(tail.rest)])
+          break
+        }
+        const split = splitNdjson(rest, decoder.decode(value, { stream: true }))
+        rest = split.rest
+        finished = consume(split.lines)
+      }
+    } finally {
+      // Stop reading once the terminal event arrived (no-op if the stream ended).
+      reader.cancel().catch(() => { /* ignore */ })
+    }
+  } else {
+    // No streaming body available — parse the whole response at once.
+    const { lines, rest } = splitNdjson('', await res.text())
+    consume([...lines, ...flushNdjson(rest)])
+  }
+
+  if (outcome.error !== undefined) throw new Error(`Upload failed: ${outcome.error}`)
+  if (!outcome.result) throw new Error('Upload failed: connection closed before processing finished')
+  return outcome.result
 }
 
 export async function saveReceipt(

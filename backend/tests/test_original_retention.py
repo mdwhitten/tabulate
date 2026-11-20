@@ -56,10 +56,10 @@ def app(db, image_dir):
     return test_app
 
 
-def _mock_pipeline(mock_ocr, mock_parse, mock_vision, mock_cat):
+def _mock_pipeline(mock_ocr, mock_parse, mock_ai, mock_cat):
     mock_ocr.return_value = "BANANA 1.50"
     mock_parse.return_value = MOCK_PARSED
-    mock_vision.return_value = MOCK_PARSED
+    mock_ai.return_value = None  # AI unavailable -> Tesseract fallback
     mock_cat.return_value = ([], False)
 
 
@@ -67,13 +67,13 @@ class TestUploadOriginal:
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
-    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
     @patch("routers.receipts.parse_receipt_text")
     @patch("routers.receipts.extract_text_from_image")
     async def test_upload_stores_original_separately(
-        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app
+        self, mock_ocr, mock_parse, mock_ai, mock_cat, db, app
     ):
-        _mock_pipeline(mock_ocr, mock_parse, mock_vision, mock_cat)
+        _mock_pipeline(mock_ocr, mock_parse, mock_ai, mock_cat)
         corrected = make_jpeg(60, 90)      # the client-corrected scan
         original = make_jpeg(120, 200)     # the pristine source
 
@@ -101,13 +101,13 @@ class TestUploadOriginal:
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
-    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
     @patch("routers.receipts.parse_receipt_text")
     @patch("routers.receipts.extract_text_from_image")
     async def test_upload_without_original_falls_back(
-        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app
+        self, mock_ocr, mock_parse, mock_ai, mock_cat, db, app
     ):
-        _mock_pipeline(mock_ocr, mock_parse, mock_vision, mock_cat)
+        _mock_pipeline(mock_ocr, mock_parse, mock_ai, mock_cat)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
@@ -175,6 +175,34 @@ class TestReplaceImage:
         # the already-stored original is untouched
         assert row["original_path"] == orig_path
         assert Image.open(orig_path).size == (300, 500)
+
+    @pytest.mark.asyncio
+    async def test_replace_stores_width_capped_image(self, db, app, image_dir):
+        rid, img_path = await self._insert(db, image_dir)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/receipts/{rid}/replace-image",
+                files={"file": ("scan.jpg", make_jpeg(2400, 6000), "image/jpeg")},
+            )
+            assert resp.status_code == 200
+            thumb = resp.json()["thumbnail_path"]
+
+        assert Image.open(img_path).size == (1200, 3000)
+        assert thumb and os.path.exists(thumb)
+
+    @pytest.mark.asyncio
+    async def test_replace_invalid_image_is_500_and_keeps_current(self, db, app, image_dir):
+        rid, img_path = await self._insert(db, image_dir)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/receipts/{rid}/replace-image",
+                files={"file": ("scan.jpg", b"not an image", "image/jpeg")},
+            )
+        assert resp.status_code == 500
+        assert "Image replace failed" in resp.json()["detail"]
+        assert Image.open(img_path).size == (120, 200)
 
     @pytest.mark.asyncio
     async def test_delete_removes_original(self, db, app, image_dir):

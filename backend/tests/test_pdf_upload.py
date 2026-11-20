@@ -109,16 +109,16 @@ class TestPdfUpload:
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
-    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
     @patch("routers.receipts.parse_receipt_text")
     @patch("routers.receipts.extract_text_from_image")
     async def test_single_page_pdf_accepted(
-        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app, tmp_path
+        self, mock_ocr, mock_parse, mock_ai, mock_cat, db, app, tmp_path
     ):
         """A single-page PDF should be converted to JPEG and processed normally."""
         mock_ocr.return_value = "BANANA 1.50"
         mock_parse.return_value = MOCK_PARSED
-        mock_vision.return_value = MOCK_PARSED
+        mock_ai.return_value = None  # AI unavailable -> Tesseract fallback
         mock_cat.return_value = (
             [{"id": 0, "raw_name": "BANANA", "clean_name": "Banana",
               "price": 1.50, "quantity": 1, "category": "Produce",
@@ -146,16 +146,16 @@ class TestPdfUpload:
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
-    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
     @patch("routers.receipts.parse_receipt_text")
     @patch("routers.receipts.extract_text_from_image")
     async def test_multi_page_pdf_stitched(
-        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app, tmp_path
+        self, mock_ocr, mock_parse, mock_ai, mock_cat, db, app, tmp_path
     ):
         """A multi-page PDF should be stitched into a single tall image."""
         mock_ocr.return_value = "BANANA 1.50"
         mock_parse.return_value = MOCK_PARSED
-        mock_vision.return_value = MOCK_PARSED
+        mock_ai.return_value = None  # AI unavailable -> Tesseract fallback
         mock_cat.return_value = (
             [{"id": 0, "raw_name": "BANANA", "clean_name": "Banana",
               "price": 1.50, "quantity": 1, "category": "Produce",
@@ -214,16 +214,16 @@ class TestPdfUpload:
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
-    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
     @patch("routers.receipts.parse_receipt_text")
     @patch("routers.receipts.extract_text_from_image")
     async def test_jpeg_still_works(
-        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app, tmp_path
+        self, mock_ocr, mock_parse, mock_ai, mock_cat, db, app, tmp_path
     ):
         """JPEG uploads should continue to work as before."""
         mock_ocr.return_value = "BANANA 1.50"
         mock_parse.return_value = MOCK_PARSED
-        mock_vision.return_value = MOCK_PARSED
+        mock_ai.return_value = None  # AI unavailable -> Tesseract fallback
         mock_cat.return_value = (
             [{"id": 0, "raw_name": "BANANA", "clean_name": "Banana",
               "price": 1.50, "quantity": 1, "category": "Produce",
@@ -265,15 +265,15 @@ class TestPdfUpload:
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
-    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
     @patch("routers.receipts.parse_receipt_text")
     @patch("routers.receipts.extract_text_from_image")
     async def test_text_pdf_skips_tesseract(
-        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app, tmp_path
+        self, mock_ocr, mock_parse, mock_ai, mock_cat, db, app, tmp_path
     ):
         """A PDF with embedded text should use that text directly, skipping Tesseract."""
         mock_parse.return_value = MOCK_PARSED
-        mock_vision.return_value = MOCK_PARSED
+        mock_ai.return_value = None  # AI unavailable -> Tesseract fallback
         mock_cat.return_value = (
             [{"id": 0, "raw_name": "BANANA", "clean_name": "Banana",
               "price": 1.50, "quantity": 1, "category": "Produce",
@@ -301,16 +301,16 @@ class TestPdfUpload:
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
-    @patch("routers.receipts.parse_receipt_with_vision", new_callable=AsyncMock)
+    @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
     @patch("routers.receipts.parse_receipt_text")
     @patch("routers.receipts.extract_text_from_image")
     async def test_scanned_pdf_falls_back_to_tesseract(
-        self, mock_ocr, mock_parse, mock_vision, mock_cat, db, app, tmp_path
+        self, mock_ocr, mock_parse, mock_ai, mock_cat, db, app, tmp_path
     ):
         """A scanned PDF (no embedded text) should fall back to Tesseract OCR."""
         mock_ocr.return_value = "BANANA 1.50"
         mock_parse.return_value = MOCK_PARSED
-        mock_vision.return_value = MOCK_PARSED
+        mock_ai.return_value = None  # AI unavailable -> Tesseract fallback
         mock_cat.return_value = (
             [{"id": 0, "raw_name": "BANANA", "clean_name": "Banana",
               "price": 1.50, "quantity": 1, "category": "Produce",
