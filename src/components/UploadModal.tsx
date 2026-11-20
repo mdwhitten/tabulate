@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { Upload, X, Loader2, AlertCircle, Check, Circle, Camera, Trash2, Plus } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useQueryClient } from '@tanstack/react-query'
@@ -6,33 +6,26 @@ import { receiptKeys } from '../hooks/useReceipts'
 import { CropModal } from './CropModal'
 import { uploadReceipt } from '../api/receipts'
 import type { ProcessingResult } from '../api/receipts'
+import {
+  describeUploadEvent,
+  initialUploadProgress,
+  uploadProgressReducer,
+  uploadStepViews,
+} from '../lib/uploadProgress'
+import type { UploadProgressState } from '../lib/uploadProgress'
 
 // ── Processing step indicator (single receipt) ────────────────────────────────
+// Driven by real progress events streamed from the backend (see uploadProgress.ts).
 
-const PROCESSING_STEPS = [
-  { label: 'Uploading image',    delay: 0 },
-  { label: 'Running OCR',        delay: 1500 },
-  { label: 'Analyzing with AI',  delay: 3500 },
-  { label: 'Categorizing items', delay: 6000 },
-] as const
-
-function ProcessingSteps() {
-  const [activeStep, setActiveStep] = useState(0)
-
-  useEffect(() => {
-    const timers = PROCESSING_STEPS.slice(1).map((step, i) =>
-      setTimeout(() => setActiveStep(i + 1), step.delay),
-    )
-    return () => timers.forEach(clearTimeout)
-  }, [])
-
+function ProcessingSteps({ progress }: { progress: UploadProgressState }) {
+  const steps = uploadStepViews(progress)
   return (
-    <div className="flex flex-col items-start gap-2.5 w-full max-w-[220px]">
-      {PROCESSING_STEPS.map((step, i) => {
-        const isDone   = i < activeStep
-        const isActive = i === activeStep
+    <div className="flex flex-col items-start gap-2.5 w-full max-w-[240px]" data-testid="processing-steps">
+      {steps.map((step, i) => {
+        const isDone   = i < progress.step
+        const isActive = i === progress.step
         return (
-          <div key={i} className="flex items-center gap-2.5">
+          <div key={i} className="flex items-start gap-2.5" aria-current={isActive ? 'step' : undefined}>
             {isDone ? (
               <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
                 <Check className="w-3 h-3 text-emerald-600" />
@@ -42,16 +35,23 @@ function ProcessingSteps() {
             ) : (
               <Circle className="w-5 h-5 text-gray-200 shrink-0" />
             )}
-            <span
-              className={cn(
-                'text-sm transition-colors duration-300',
-                isDone   && 'text-gray-400',
-                isActive && 'text-gray-800 font-medium',
-                !isDone && !isActive && 'text-gray-300',
+            <div className="flex flex-col min-w-0">
+              <span
+                className={cn(
+                  'text-sm leading-5 transition-colors duration-300',
+                  isDone   && 'text-gray-400',
+                  isActive && 'text-gray-800 font-medium',
+                  !isDone && !isActive && 'text-gray-300',
+                )}
+              >
+                {step.label}
+              </span>
+              {step.detail && (isDone || isActive) && (
+                <span className={cn('text-xs tabular-nums', isActive ? 'text-[#03a9f4]' : 'text-gray-400')}>
+                  {step.detail}
+                </span>
               )}
-            >
-              {step.label}
-            </span>
+            </div>
           </div>
         )
       })}
@@ -86,6 +86,10 @@ export function UploadModal({ onClose, onBatchSuccess }: UploadModalProps) {
   const [queue, setQueue]       = useState<QueuedItem[]>([])
   const [error, setError]       = useState<string | null>(null)
   const [done, setDone]         = useState(0)   // batch progress counter
+  // Single-receipt progress, driven by streamed server events.
+  const [progress, dispatchProgress] = useReducer(uploadProgressReducer, initialUploadProgress)
+  // Batch: most recent stage text from any of the parallel uploads.
+  const [batchStage, setBatchStage]  = useState<string | null>(null)
 
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -144,10 +148,16 @@ export function UploadModal({ onClose, onBatchSuccess }: UploadModalProps) {
     setStage('uploading')
     setError(null)
     setDone(0)
+    dispatchProgress({ type: 'reset' })
+    setBatchStage(null)
     const prepared = resultsRef.current.map(r => r!)
     const settled = await Promise.allSettled(
       prepared.map(async r => {
-        const result = await uploadReceipt(r.payload, null, r.original)
+        const result = await uploadReceipt(r.payload, null, r.original, event => {
+          dispatchProgress(event)
+          const text = describeUploadEvent(event)
+          if (text) setBatchStage(text)
+        })
         setDone(d => d + 1)
         return result
       }),
@@ -158,7 +168,9 @@ export function UploadModal({ onClose, onBatchSuccess }: UploadModalProps) {
     qc.invalidateQueries({ queryKey: receiptKeys.list() })
 
     if (results.length === 0) {
-      setError('All uploads failed. Please try again.')
+      // A single receipt's failure carries a useful server message (e.g. "Could not read receipt").
+      const only = settled.length === 1 && settled[0].status === 'rejected' ? settled[0].reason : null
+      setError(only instanceof Error ? only.message : 'All uploads failed. Please try again.')
       setStage('pick')
       return
     }
@@ -239,10 +251,10 @@ export function UploadModal({ onClose, onBatchSuccess }: UploadModalProps) {
                   <p className="text-sm font-medium text-gray-800">
                     Processing {done} of {queue.length} receipts…
                   </p>
-                  <p className="text-xs text-gray-400">Detecting edges & running OCR in parallel</p>
+                  <p className="text-xs text-gray-400">{batchStage ?? 'Uploading images'}</p>
                 </>
               ) : (
-                <ProcessingSteps />
+                <ProcessingSteps progress={progress} />
               )}
             </div>
           ) : queue.length === 0 ? (

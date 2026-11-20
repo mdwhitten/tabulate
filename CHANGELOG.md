@@ -5,6 +5,25 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-11-20
+
+### Added
+- **Live upload progress** — the upload screen now shows the real processing stage (preparing, reading, checking totals, categorizing & saving) with a live "N items found" count, streamed from a new `POST /api/receipts/upload-stream` endpoint, instead of timed placeholder steps.
+- New optional settings: `CLAUDE_MODEL` (default `claude-haiku-5-5`), `CLAUDE_EFFORT` (default `low`) and `STORED_IMAGE_MAX_WIDTH` (default `1200`).
+- `backend/scripts/eval_receipt.py` for checking extraction accuracy and speed on a real receipt.
+
+### Changed
+- **AI-first receipt reading.** Claude now reads the full-resolution receipt in a single call and assigns each item's category at the same time; Tesseract OCR is only used as a fallback when no API key is set or the AI call fails. Long receipts are split into overlapping sections so they stay legible, and the extracted items are checked against the printed total and item count, with one automatic re-check when they don't match.
+- The extraction prompt now works for any store (it previously assumed H-E-B's receipt layout).
+- Stored receipt images are downscaled to a maximum width to save disk space; processing still uses the full-resolution upload.
+- Image processing and OCR no longer block other requests while a receipt is being processed.
+- Anthropic Python SDK upgraded from 0.40.0 to 2.12.0 (its license is now Apache 2.0).
+
+### Fixed
+- Long receipts (e.g. a 76-item ALDI receipt) no longer lose items or misread the total: the AI response was being cut off and the app silently fell back to OCR.
+- Letter-spaced totals (`T O T A L`) and `AMOUNT DUE` lines are now recognized by the OCR fallback.
+- AI categorization results are matched to items by ID, so a missing result can no longer shift categories onto the wrong items, and large receipts no longer exceed the categorization response limit.
+
 ## [2.2.0] - 2026-07-15
 
 ### Added

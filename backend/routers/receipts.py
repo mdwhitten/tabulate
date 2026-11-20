@@ -1,29 +1,33 @@
 """
 Receipts Router
 
-POST /api/receipts/upload     — upload image, run OCR + categorization
+POST /api/receipts/upload     — upload image, extract + categorize (JSON result)
+POST /api/receipts/upload-stream — same, streaming NDJSON progress events
 GET  /api/receipts            — list all receipts (summary)
 GET  /api/receipts/{id}       — get receipt with line items
 POST /api/receipts/{id}/save  — finalize receipt, apply corrections
 DELETE /api/receipts/{id}     — remove a receipt
 """
+import asyncio
+import json
 import logging
 import os
 import uuid
 import shutil
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 import aiosqlite
-from fastapi import APIRouter, File, UploadFile, Depends, HTTPException, Form
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, UploadFile, Depends, HTTPException, Form, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from db.database import get_db
 from models.schemas import ReceiptSummary, Receipt, ProcessingResult, LineItem
-from services.ocr_service import extract_text_from_image, parse_receipt_text, parse_receipt_with_vision, verify_total
-from services.categorize_service import categorize_items, apply_manual_correction, persist_approved_mappings
-from services.image_service import generate_thumbnail, detect_receipt_edges
+from services.ocr_service import extract_text_from_image, parse_receipt_text, verify_total
+from services.receipt_ai import extract_receipt_with_ai
+from services.categorize_service import categorize_items, get_categories, apply_manual_correction, persist_approved_mappings
+from services.image_service import generate_thumbnail, detect_receipt_edges, downscale_for_storage
 
 logger = logging.getLogger("tabulate.receipts")
 router = APIRouter()
@@ -83,47 +87,54 @@ async def diagnose():
 
 # ── Upload & Process ──────────────────────────────────────────────────────────
 
-@router.post("/upload", response_model=ProcessingResult)
-async def upload_receipt(
-    file: UploadFile = File(...),
-    store_name_hint: Optional[str] = Form(None),
-    crop_corners: Optional[str] = Form(None),   # JSON [[x,y],[x,y],[x,y],[x,y]] as 0–1 fractions
-    original: Optional[UploadFile] = File(None),  # pristine pre-crop image, when the client already perspective-corrected `file`
-    db: aiosqlite.Connection = Depends(get_db),
-):
-    """
-    Accept an image upload, run OCR, parse, verify total, categorize items.
-    Returns a ProcessingResult for the review screen — nothing is saved to DB yet.
-    If crop_corners is provided (4 [x,y] fraction pairs), the image is cropped first.
-    When the client has already perspective-corrected the receipt, it sends the
-    corrected image as `file` and the raw image as `original` so the crop can be
-    redone later from the pristine source.
-    """
-    import json as _json
-    from PIL import Image as _PILImage, ImageOps as _ImageOps
-    import io as _io
+_ALLOWED_CONTENT_TYPES = {
+    "image/jpeg", "image/png", "image/webp", "image/tiff",
+    "image/heic", "image/heif", "application/pdf",
+}
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024   # matches nginx client_max_body_size
 
-    # Validate file type before reading
-    _ALLOWED_CONTENT_TYPES = {
-        "image/jpeg", "image/png", "image/webp", "image/tiff",
-        "image/heic", "image/heif", "application/pdf",
-    }
+ProgressFn = Callable[..., None]
+
+# Strong references to in-flight /upload-stream workers: the event loop only
+# keeps weak references to tasks, so an unreferenced task can be collected.
+_stream_tasks: set[asyncio.Task] = set()
+
+
+def _no_progress(stage: str, **detail) -> None:
+    pass
+
+
+async def _read_upload(
+    file: UploadFile, original: Optional[UploadFile]
+) -> tuple[bytes, Optional[str], Optional[bytes]]:
+    """Validate and read the upload (and optional pristine original) into memory."""
     if file.content_type and file.content_type not in _ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=422, detail=f"Unsupported file type: {file.content_type}")
-
-    # Read with a size cap (20 MB matches nginx client_max_body_size)
-    _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
     contents = await file.read(_MAX_UPLOAD_BYTES + 1)
     if len(contents) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
+    orig_bytes = None
+    if original is not None:
+        data = await original.read(_MAX_UPLOAD_BYTES + 1)
+        if 0 < len(data) <= _MAX_UPLOAD_BYTES:
+            orig_bytes = data
+    return contents, file.content_type, orig_bytes
 
-    # PDF handling: extract embedded text directly when available, render to
-    # image for thumbnail/vision.  Falls back to Tesseract only for scanned PDFs.
-    is_pdf = (
-        (file.content_type == "application/pdf")
-        or contents[:5] == b"%PDF-"
-    )
-    pdf_text: str | None = None   # set when PDF has usable embedded text
+
+def _prepare_image(
+    contents: bytes, content_type: Optional[str], crop_corners: Optional[str]
+) -> tuple[bytes, Optional[str]]:
+    """CPU-bound image preparation (run in a worker thread).
+
+    Renders PDFs (keeping any embedded text), normalises EXIF orientation,
+    re-encodes to JPEG and applies the user's crop. Returns the full-resolution
+    JPEG used for processing, plus the PDF's embedded text when present.
+    """
+    from PIL import Image as _PILImage, ImageOps as _ImageOps
+    import io as _io
+
+    is_pdf = content_type == "application/pdf" or contents[:5] == b"%PDF-"
+    pdf_text: Optional[str] = None
     if is_pdf:
         try:
             from pdf2image import convert_from_bytes
@@ -133,18 +144,13 @@ async def upload_receipt(
             if len(reader.pages) == 0:
                 raise HTTPException(status_code=422, detail="PDF has no pages")
 
-            # Extract embedded text from all pages
-            raw_text = "\n".join(
-                (page.extract_text() or "") for page in reader.pages
-            ).strip()
+            raw_text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
             if raw_text:
                 pdf_text = raw_text
                 logger.info("Extracted %d chars of embedded text from %d-page PDF",
                             len(raw_text), len(reader.pages))
 
-            # Render pages to image for thumbnail and Vision enrichment
             page_images = convert_from_bytes(contents, dpi=300, fmt="jpeg")
-
             if len(page_images) == 1:
                 combined = page_images[0]
             else:
@@ -166,10 +172,9 @@ async def upload_receipt(
             raise HTTPException(status_code=500, detail="PDF support not available (pdf2image/pypdf not installed)")
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Failed to process PDF: {e}")
-
-    # Always normalise EXIF orientation (phone photos are often rotated in metadata)
-    # and re-encode as JPEG so downstream tools see correct pixel orientation.
-    if not is_pdf:
+    else:
+        # Normalise EXIF orientation (phone photos are often rotated in metadata)
+        # and re-encode as JPEG so downstream tools see correct pixel orientation.
         try:
             _img = _PILImage.open(_io.BytesIO(contents))
             _img = _ImageOps.exif_transpose(_img)
@@ -184,7 +189,7 @@ async def upload_receipt(
     # Apply user crop if provided (corners as fractions of EXIF-corrected image dimensions)
     if crop_corners:
         try:
-            corners = _json.loads(crop_corners)
+            corners = json.loads(crop_corners)
             if len(corners) == 4:
                 img = _PILImage.open(_io.BytesIO(contents))
                 w, h = img.size
@@ -203,64 +208,101 @@ async def upload_receipt(
         except Exception as e:
             logger.warning("Crop failed, using full image: %s", e)
 
-    # Save image to disk — always .jpg since we re-encoded above
-    ext = ".jpg"
-    image_filename = f"{uuid.uuid4()}{ext}"
-    image_path = os.path.join(IMAGE_DIR, image_filename)
+    return contents, pdf_text
 
+
+def _store_images(contents: bytes, orig_bytes: Optional[bytes]) -> tuple[str, Optional[str], Optional[str]]:
+    """Write reduced-size copies of the receipt (and pristine original) to disk.
+
+    Processing already happened on the full-resolution bytes; storage keeps a
+    width-capped JPEG to avoid bloating the data directory. Runs in a worker thread.
+    Returns (image_path, thumbnail_path, original_path).
+    """
+    from PIL import Image as _PILImage, ImageOps as _ImageOps
+    import io as _io
+
+    image_path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
+    stored = downscale_for_storage(contents)
     with open(image_path, "wb") as f:
-        f.write(contents)
+        f.write(stored)
 
-    # Generate compressed thumbnail (used for image preview in the review page)
-    thumb_filename = f"thumb_{uuid.uuid4()}.jpg"
-    thumb_path = os.path.join(IMAGE_DIR, thumb_filename)
-    thumbnail_path = generate_thumbnail(contents, thumb_path)
+    thumb_path = os.path.join(IMAGE_DIR, f"thumb_{uuid.uuid4()}.jpg")
+    thumbnail_path = generate_thumbnail(stored, thumb_path)
 
     # If the client perspective-corrected the receipt, it also sends the pristine
     # pre-crop image so the crop can be redone from the original later. Store it
     # separately; when absent, image_path *is* the original (original_path stays null).
     original_path = None
-    if original is not None:
+    if orig_bytes:
         try:
-            orig_bytes = await original.read(_MAX_UPLOAD_BYTES + 1)
-            if 0 < len(orig_bytes) <= _MAX_UPLOAD_BYTES:
-                _oimg = _PILImage.open(_io.BytesIO(orig_bytes))
-                _oimg = _ImageOps.exif_transpose(_oimg)
-                if _oimg.mode not in ("RGB", "L"):
-                    _oimg = _oimg.convert("RGB")
-                _obuf = _io.BytesIO()
-                _oimg.save(_obuf, format="JPEG", quality=92, optimize=True)
-                original_path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
-                with open(original_path, "wb") as f:
-                    f.write(_obuf.getvalue())
+            _oimg = _PILImage.open(_io.BytesIO(orig_bytes))
+            _oimg = _ImageOps.exif_transpose(_oimg)
+            if _oimg.mode not in ("RGB", "L"):
+                _oimg = _oimg.convert("RGB")
+            _obuf = _io.BytesIO()
+            _oimg.save(_obuf, format="JPEG", quality=92, optimize=True)
+            original_path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
+            with open(original_path, "wb") as f:
+                f.write(downscale_for_storage(_obuf.getvalue()))
         except Exception as e:
             logger.warning("Failed to store original image, continuing without it: %s", e)
             original_path = None
 
-    # Text extraction — use embedded PDF text when available, fall back to Tesseract OCR
-    if pdf_text:
-        ocr_text = pdf_text
-        logger.info("Using embedded PDF text, skipping Tesseract OCR")
-    else:
-        try:
-            ocr_text = extract_text_from_image(contents)
-        except Exception as e:
-            if os.path.exists(image_path):
-                os.remove(image_path)
-            err_type = type(e).__name__
-            err_msg  = str(e)
-            if 'tesseract' in err_msg.lower() or 'Tesseract' in err_type:
-                raise HTTPException(status_code=500,
-                    detail='Tesseract OCR not found in container. Run: docker compose build --no-cache')
-            raise HTTPException(status_code=422, detail=f'OCR failed ({err_type}): {err_msg}')
+    return image_path, thumbnail_path, original_path
 
-    # Parse — Tesseract regex heuristics first, then Claude Vision enrichment
-    parsed = parse_receipt_text(ocr_text)
-    parsed = await parse_receipt_with_vision(contents, parsed)
+
+async def _process_upload(
+    *,
+    contents: bytes,
+    content_type: Optional[str],
+    orig_bytes: Optional[bytes],
+    store_name_hint: Optional[str],
+    crop_corners: Optional[str],
+    db: aiosqlite.Connection,
+    progress: ProgressFn = _no_progress,
+) -> ProcessingResult:
+    """Run the full upload pipeline. `progress(stage, **detail)` is called as
+    each real stage starts: preparing → reading → checking → categorizing → saving."""
+    progress("preparing")
+    contents, pdf_text = await asyncio.to_thread(_prepare_image, contents, content_type, crop_corners)
+
+    # Extraction — Claude reads the full-resolution image (and assigns
+    # categories); Tesseract + regex parsing is the fallback.
+    categories = await get_categories(db)
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        progress("reading", method="ai")
+    parsed = await extract_receipt_with_ai(
+        contents, categories, text_hint=pdf_text,
+        on_progress=progress,
+    )
+    if parsed is not None:
+        # ProcessingResult.ocr_raw is a required string; images have no text layer.
+        ocr_text = pdf_text or ""
+    else:
+        progress("reading", method="ocr")
+        if pdf_text:
+            ocr_text = pdf_text
+            logger.info("Using embedded PDF text, skipping Tesseract OCR")
+        else:
+            try:
+                ocr_text = await asyncio.to_thread(extract_text_from_image, contents)
+            except Exception as e:
+                err_type = type(e).__name__
+                err_msg = str(e)
+                if 'tesseract' in err_msg.lower() or 'Tesseract' in err_type:
+                    raise HTTPException(status_code=500,
+                        detail='Tesseract OCR not found in container. Run: docker compose build --no-cache')
+                raise HTTPException(status_code=422, detail=f'OCR failed ({err_type}): {err_msg}')
+        parsed = parse_receipt_text(ocr_text)
+
     store = store_name_hint or parsed.store_name or "Unknown Store"
 
-    # Verify total
+    progress("checking")
     verified, verify_msg = verify_total(parsed)
+
+    image_path, thumbnail_path, original_path = await asyncio.to_thread(
+        _store_images, contents, orig_bytes
+    )
 
     # Persist receipt (status = 'pending' until user saves)
     cursor = await db.execute(
@@ -275,15 +317,18 @@ async def upload_receipt(
     receipt_id = cursor.lastrowid
     await db.commit()
 
-    # Categorize items (checks learned DB first, then Claude)
+    # Categorize: learned mappings first, then the category Claude assigned
+    # while reading, then one batched Claude call for anything left.
+    progress("categorizing")
     raw_items = [
         {"id": i, "raw_name": item["raw_name"], "clean_name": item["clean_name"],
-         "price": item["price"], "quantity": item["quantity"]}
+         "price": item["price"], "quantity": item["quantity"],
+         "category": item.get("category")}
         for i, item in enumerate(parsed.raw_items)
     ]
     categorized, categorization_failed = await categorize_items(raw_items, store, db)
 
-    # Persist line items
+    progress("saving")
     line_items = []
     for item in categorized:
         cur2 = await db.execute(
@@ -291,8 +336,7 @@ async def upload_receipt(
                (receipt_id, raw_name, clean_name, price, quantity,
                 category, category_source, ai_confidence)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (receipt_id, item["raw_name"], item.get("clean_name"),
-             item["price"], item.get("quantity", 1),
+            (receipt_id, item["raw_name"], item.get("clean_name"), item["price"], item.get("quantity", 1),
              item["category"], item["category_source"], item.get("ai_confidence")),
         )
         line_items.append(LineItem(
@@ -323,6 +367,96 @@ async def upload_receipt(
         thumbnail_path=thumbnail_path,
         categorization_failed=categorization_failed,
         items=line_items,
+    )
+
+
+@router.post("/upload", response_model=ProcessingResult)
+async def upload_receipt(
+    file: UploadFile = File(...),
+    store_name_hint: Optional[str] = Form(None),
+    crop_corners: Optional[str] = Form(None),   # JSON [[x,y],[x,y],[x,y],[x,y]] as 0–1 fractions
+    original: Optional[UploadFile] = File(None),  # pristine pre-crop image, when the client already perspective-corrected `file`
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Accept an image upload, extract the receipt (Claude, with Tesseract as the
+    fallback), verify the total and categorize items.
+    Returns a ProcessingResult for the review screen; the receipt is stored as 'pending'.
+    If crop_corners is provided (4 [x,y] fraction pairs), the image is cropped first.
+    When the client has already perspective-corrected the receipt, it sends the
+    corrected image as `file` and the raw image as `original` so the crop can be
+    redone later from the pristine source.
+    """
+    contents, content_type, orig_bytes = await _read_upload(file, original)
+    return await _process_upload(
+        contents=contents, content_type=content_type, orig_bytes=orig_bytes,
+        store_name_hint=store_name_hint, crop_corners=crop_corners, db=db,
+    )
+
+
+@router.post("/upload-stream")
+async def upload_receipt_stream(
+    request: Request,
+    file: UploadFile = File(...),
+    store_name_hint: Optional[str] = Form(None),
+    crop_corners: Optional[str] = Form(None),
+    original: Optional[UploadFile] = File(None),
+):
+    """
+    Same as /upload, but streams newline-delimited JSON so the UI can show real
+    progress:
+        {"type": "progress", "stage": "reading", "items": 12}
+        ...
+        {"type": "result", "data": <ProcessingResult>}
+    or, on failure, {"type": "error", "status": 422, "detail": "..."}.
+    """
+    contents, content_type, orig_bytes = await _read_upload(file, original)
+    # The response body outlives the endpoint, so open the DB connection inside
+    # the stream rather than through Depends (honouring test overrides).
+    db_factory = request.app.dependency_overrides.get(get_db, get_db)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def progress(stage: str, **detail) -> None:
+        queue.put_nowait({"type": "progress", "stage": stage, **detail})
+
+    async def run() -> None:
+        db_gen = db_factory()
+        try:
+            db = await db_gen.__anext__()
+            result = await _process_upload(
+                contents=contents, content_type=content_type, orig_bytes=orig_bytes,
+                store_name_hint=store_name_hint, crop_corners=crop_corners, db=db,
+                progress=progress,
+            )
+            queue.put_nowait({"type": "result", "data": result.model_dump(mode="json")})
+        except HTTPException as e:
+            queue.put_nowait({"type": "error", "status": e.status_code, "detail": e.detail})
+        except Exception:
+            logger.exception("Receipt processing failed")
+            queue.put_nowait({"type": "error", "status": 500, "detail": "Receipt processing failed"})
+        finally:
+            try:
+                await db_gen.aclose()
+            finally:
+                queue.put_nowait(None)
+
+    async def events():
+        task = asyncio.create_task(run())
+        _stream_tasks.add(task)
+        task.add_done_callback(_stream_tasks.discard)
+        try:
+            while (event := await queue.get()) is not None:
+                yield json.dumps(event) + "\n"
+        finally:
+            # Client went away (or the response was torn down): stop the work.
+            # run()'s own finally closes the DB connection.
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        events(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -840,7 +974,7 @@ async def detect_edges_raw(file: UploadFile = File(...)):
     Returns four corner points as fractions (0–1), ordered TL→TR→BR→BL.
     """
     contents = await file.read()
-    corners = detect_receipt_edges(contents)
+    corners = await asyncio.to_thread(detect_receipt_edges, contents)
     if corners is None:
         corners = [[0.02, 0.02], [0.98, 0.02], [0.98, 0.98], [0.02, 0.98]]
     return {"corners": corners}
@@ -857,15 +991,51 @@ async def receipt_detect_edges(
     ordered TL → TR → BR → BL.
     """
     path = await _get_image_path(receipt_id, db, "image_path")
-    with open(path, "rb") as f:
-        image_bytes = f.read()
 
-    corners = detect_receipt_edges(image_bytes)
+    def _detect() -> Optional[list]:
+        with open(path, "rb") as f:
+            return detect_receipt_edges(f.read())
+
+    corners = await asyncio.to_thread(_detect)
     if corners is None:
         # Return full-image corners as fallback
         corners = [[0.02, 0.02], [0.98, 0.02], [0.98, 0.98], [0.02, 0.98]]
 
     return {"corners": corners}
+
+
+def _replace_image_files(
+    contents: bytes, image_path: str, original_path: Optional[str], old_thumb: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """Blocking part of replace-image (run in a worker thread).
+
+    Normalises the new image, preserves the current image as the original on
+    the first re-crop, overwrites image_path with a width-capped copy and
+    regenerates the thumbnail. Returns (original_path, thumbnail_path).
+    """
+    from PIL import Image as _PILImage, ImageOps as _ImageOps
+    import io as _io
+
+    img = _PILImage.open(_io.BytesIO(contents))
+    img = _ImageOps.exif_transpose(img)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG", quality=92, optimize=True)
+    new_bytes = downscale_for_storage(buf.getvalue())
+
+    # Preserve the pristine original before the first destructive re-crop.
+    if not original_path and os.path.exists(image_path):
+        original_path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
+        shutil.copyfile(image_path, original_path)
+
+    # Overwrite the displayed image in place (URL stays stable; client cache-busts)
+    with open(image_path, "wb") as f:
+        f.write(new_bytes)
+
+    thumb_path = old_thumb or os.path.join(IMAGE_DIR, f"thumb_{uuid.uuid4()}.jpg")
+    new_thumb = generate_thumbnail(new_bytes, thumb_path)
+    return original_path, new_thumb
 
 
 @router.post("/{receipt_id}/replace-image")
@@ -883,11 +1053,6 @@ async def replace_receipt_image(
     separate original yet, the current image is preserved as the original before
     it's overwritten — so the first re-crop is still reversible.
     """
-    from services.image_service import generate_thumbnail
-    from PIL import Image as PILImage, ImageOps as _ImageOps2
-    import io as _io
-
-    _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
     contents = await file.read(_MAX_UPLOAD_BYTES + 1)
     if not contents:
         raise HTTPException(status_code=422, detail="Empty image")
@@ -906,37 +1071,14 @@ async def replace_receipt_image(
         raise HTTPException(status_code=404, detail="Receipt has no image")
 
     try:
-        img = PILImage.open(_io.BytesIO(contents))
-        img = _ImageOps2.exif_transpose(img)
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        buf = _io.BytesIO()
-        img.save(buf, format="JPEG", quality=92, optimize=True)
-        new_bytes = buf.getvalue()
-
-        # Preserve the pristine original before the first destructive re-crop.
-        original_path = row["original_path"]
-        if not original_path and os.path.exists(image_path):
-            original_path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
-            shutil.copyfile(image_path, original_path)
-
-        # Overwrite the displayed image in place (URL stays stable; client cache-busts)
-        with open(image_path, "wb") as f:
-            f.write(new_bytes)
-
-        # Regenerate thumbnail
-        old_thumb = row["thumbnail_path"]
-        thumb_path = old_thumb or os.path.join(IMAGE_DIR, f"thumb_{uuid.uuid4()}.jpg")
-        new_thumb = generate_thumbnail(new_bytes, thumb_path)
-
+        original_path, new_thumb = await asyncio.to_thread(
+            _replace_image_files, contents, image_path, row["original_path"], row["thumbnail_path"]
+        )
         await db.execute(
             "UPDATE receipts SET original_path = ?, thumbnail_path = ? WHERE id = ?",
             (original_path, new_thumb, receipt_id),
         )
         await db.commit()
-
         return {"status": "replaced", "thumbnail_path": new_thumb}
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image replace failed: {e}")

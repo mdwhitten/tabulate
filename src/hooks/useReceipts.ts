@@ -7,7 +7,7 @@ import {
   deleteReceipt,
   recategorizeReceipt,
 } from '../api/receipts'
-import type { CropCorners, RecategorizeResult } from '../api/receipts'
+import type { CropCorners, RecategorizeResult, UploadProgressEvent } from '../api/receipts'
 import type { SaveReceiptBody } from '../types'
 
 export const receiptKeys = {
@@ -34,8 +34,11 @@ export function useReceipt(id: number | null) {
 export function useUploadReceipt() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, cropCorners }: { file: File | Blob; cropCorners?: CropCorners | null }) =>
-      uploadReceipt(file, cropCorners),
+    mutationFn: ({ file, cropCorners, onProgress }: {
+      file: File | Blob
+      cropCorners?: CropCorners | null
+      onProgress?: (event: UploadProgressEvent) => void
+    }) => uploadReceipt(file, cropCorners, null, onProgress),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: receiptKeys.list() })
     },

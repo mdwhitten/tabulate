@@ -67,6 +67,10 @@ def app(db):
 
 # ── GET /api/trends/monthly ─────────────────────────────────────────────────
 
+# /monthly only covers the last N months, so its data must be dated recently.
+RECENT = date.today().replace(day=1)
+RECENT_DATE = RECENT.isoformat()
+
 class TestMonthlyTrends:
 
     @pytest.mark.asyncio
@@ -83,7 +87,7 @@ class TestMonthlyTrends:
 
     @pytest.mark.asyncio
     async def test_returns_monthly_data(self, db, app):
-        rid = await insert_receipt(db, receipt_date="2026-02-15")
+        rid = await insert_receipt(db, receipt_date=RECENT_DATE)
         await insert_item(db, rid, price=10.00, category="Produce")
         await insert_item(db, rid, price=5.00, category="Dairy & Eggs")
 
@@ -95,15 +99,15 @@ class TestMonthlyTrends:
         body = resp.json()
         assert len(body["months"]) >= 1
         feb = body["months"][-1]
-        assert feb["year"] == 2026
-        assert feb["month"] == 2
+        assert feb["year"] == RECENT.year
+        assert feb["month"] == RECENT.month
         assert feb["total"] == 15.00
         assert feb["by_category"]["Produce"] == 10.00
         assert feb["by_category"]["Dairy & Eggs"] == 5.00
 
     @pytest.mark.asyncio
     async def test_zero_fills_missing_categories(self, db, app):
-        rid = await insert_receipt(db, receipt_date="2026-02-15")
+        rid = await insert_receipt(db, receipt_date=RECENT_DATE)
         await insert_item(db, rid, price=10.00, category="Produce")
 
         async with AsyncClient(
@@ -143,7 +147,7 @@ class TestMonthlyTrends:
 
     @pytest.mark.asyncio
     async def test_month_label_format(self, db, app):
-        rid = await insert_receipt(db, receipt_date="2026-02-15")
+        rid = await insert_receipt(db, receipt_date=RECENT_DATE)
         await insert_item(db, rid, price=10.00, category="Produce")
 
         async with AsyncClient(
@@ -152,7 +156,7 @@ class TestMonthlyTrends:
             resp = await client.get("/api/trends/monthly")
 
         feb = resp.json()["months"][-1]
-        assert feb["month_label"] == "Feb 2026"
+        assert feb["month_label"] == RECENT.strftime("%b %Y")
 
 
 # ── GET /api/trends/monthly/{year}/{month} ──────────────────────────────────
