@@ -1,6 +1,6 @@
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
-aiosqlite==0.20.0
+fastapi==0.129.2
+uvicorn[standard]==0.41.0
+aiosqlite==0.22.1
 anthropic==2.12.0
 pytesseract==0.3.13
 Pillow==11.0.0
@@ -8,6 +8,6 @@ pillow-heif==0.21.0
 numpy==2.2.3
 pdf2image==1.17.0
 pypdf==6.11.0
-python-multipart==0.0.12
-pydantic==2.10.3
+python-multipart==0.0.22
+pydantic==2.12.5
 ynab==4.1.0
