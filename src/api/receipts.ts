@@ -1,5 +1,5 @@
 import { apiFetch, apiUrl } from './client'
-import { splitNdjson, flushNdjson } from '../lib/ndjson'
+import { splitNdjson, flushNdjson, eventPayload } from '../lib/ndjson'
 import type { Receipt, ReceiptSummary, SaveReceiptBody, DuplicateMatch } from '../types'
 
 export interface ProcessingResult {
@@ -50,9 +50,10 @@ type UploadStreamEvent =
 /**
  * Upload a receipt and process it, streaming progress.
  *
- * The server replies with NDJSON: zero or more `progress` events followed by
- * a final `result` (resolved) or `error` (thrown). Validation failures come
- * back as an ordinary non-2xx JSON response before any streaming.
+ * The server replies with server-sent events (one `data: {...}` line per
+ * event): zero or more `progress` events followed by a final `result`
+ * (resolved) or `error` (thrown). Validation failures come back as an ordinary
+ * non-2xx JSON response before any streaming.
  */
 export async function uploadReceipt(
   file: File | Blob,
@@ -84,9 +85,11 @@ export async function uploadReceipt(
 
   // Returns true once a terminal (result / error) event has been seen.
   const handleLine = (line: string): boolean => {
+    const payload = eventPayload(line)
+    if (payload === null) return false
     let event: UploadStreamEvent
     try {
-      event = JSON.parse(line) as UploadStreamEvent
+      event = JSON.parse(payload) as UploadStreamEvent
     } catch {
       console.warn('Ignoring malformed upload-stream line:', line)
       return false

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitNdjson, flushNdjson } from './ndjson'
+import { splitNdjson, flushNdjson, eventPayload } from './ndjson'
 
 /** Feed chunks through the splitter the way the stream reader does. */
 function runChunks(chunks: string[]): string[] {
@@ -44,5 +44,23 @@ describe('splitNdjson', () => {
   it('returns nothing for empty input', () => {
     expect(runChunks([''])).toEqual([])
     expect(flushNdjson('   ')).toEqual([])
+  })
+})
+
+describe('eventPayload', () => {
+  it('strips the SSE data: prefix (with or without a space)', () => {
+    expect(eventPayload('data: {"a":1}')).toBe('{"a":1}')
+    expect(eventPayload('data:{"a":1}')).toBe('{"a":1}')
+  })
+
+  it('ignores SSE comments and non-data fields', () => {
+    expect(eventPayload(': keep-alive')).toBeNull()
+    expect(eventPayload('event: progress')).toBeNull()
+    expect(eventPayload('id: 7')).toBeNull()
+    expect(eventPayload('retry: 1000')).toBeNull()
+  })
+
+  it('passes plain NDJSON lines through', () => {
+    expect(eventPayload('{"a":1}')).toBe('{"a":1}')
   })
 })

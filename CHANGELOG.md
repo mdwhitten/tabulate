@@ -5,6 +5,11 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-11-21
+
+### Fixed
+- The upload progress screen no longer stays on "Uploading image" for the whole wait when Tabulate runs behind Home Assistant ingress. Progress is now streamed as server-sent events (`text/event-stream`); the previous `application/x-ndjson` stream was compressed by the ingress proxy, which held every progress update until processing had finished.
+
 ## [2.3.0] - 2026-11-20
 
 ### Added

@@ -2,7 +2,7 @@
 Receipts Router
 
 POST /api/receipts/upload     — upload image, extract + categorize (JSON result)
-POST /api/receipts/upload-stream — same, streaming NDJSON progress events
+POST /api/receipts/upload-stream — same, streaming progress as server-sent events
 GET  /api/receipts            — list all receipts (summary)
 GET  /api/receipts/{id}       — get receipt with line items
 POST /api/receipts/{id}/save  — finalize receipt, apply corrections
@@ -403,12 +403,18 @@ async def upload_receipt_stream(
     original: Optional[UploadFile] = File(None),
 ):
     """
-    Same as /upload, but streams newline-delimited JSON so the UI can show real
-    progress:
-        {"type": "progress", "stage": "reading", "items": 12}
+    Same as /upload, but streams progress as server-sent events so the UI can
+    show real progress. Each event is one `data:` line holding a JSON object:
+        data: {"type": "progress", "stage": "reading", "method": "ai", "items": 12}
         ...
-        {"type": "result", "data": <ProcessingResult>}
-    or, on failure, {"type": "error", "status": 422, "detail": "..."}.
+        data: {"type": "result", "data": <ProcessingResult>}
+    or, on failure, data: {"type": "error", "status": 422, "detail": "..."}.
+
+    text/event-stream (rather than NDJSON) matters behind proxies: Home
+    Assistant's ingress gzips any application/*json* response, and the
+    compressor holds small chunks until the stream ends, so every progress event
+    arrived at once with the result. Proxies leave text/event-stream unbuffered
+    and uncompressed.
     """
     contents, content_type, orig_bytes = await _read_upload(file, original)
     # The response body outlives the endpoint, so open the DB connection inside
@@ -446,7 +452,7 @@ async def upload_receipt_stream(
         task.add_done_callback(_stream_tasks.discard)
         try:
             while (event := await queue.get()) is not None:
-                yield json.dumps(event) + "\n"
+                yield f"data: {json.dumps(event)}\n\n"
         finally:
             # Client went away (or the response was torn down): stop the work.
             # run()'s own finally closes the DB connection.
@@ -455,7 +461,7 @@ async def upload_receipt_stream(
 
     return StreamingResponse(
         events(),
-        media_type="application/x-ndjson",
+        media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
