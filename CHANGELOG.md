@@ -5,6 +5,27 @@ All notable changes to Tabulate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-11-21
+
+### Added
+- **Background processing.** A receipt is now stored on the server the moment it is uploaded and read in the background, so closing the page, navigating away or losing the connection no longer loses it. Receipts that were still being read when the server stopped are picked up again when it restarts.
+- **Upload as you crop.** In a multi-receipt upload each photo is sent as soon as its crop is confirmed, while you crop the next one, instead of everything waiting for the last crop.
+- **Receipts show up while they are being read.** Uploaded receipts appear in the receipts list and dashboard as "Processing…" and the lists refresh themselves until they are done; opening one shows a waiting screen that turns into the review.
+- **Per-receipt progress** in a multi-receipt upload, and a "Continue in background" option once everything is uploaded.
+- **Failed receipts are kept and can be retried.** A receipt that could not be read stays in the list as "Failed" with the reason, and can be retried or deleted — from the upload window or from the receipt itself. A batch with a failure now waits for you instead of silently skipping it.
+- New endpoints: `POST /api/receipts/enqueue` (accept an upload, returns immediately), `GET /api/receipts/status?ids=…` (progress, failure reason or result) and `POST /api/receipts/{id}/reprocess` (retry a failed receipt).
+- New optional setting `PROCESSING_CONCURRENCY` (default `2`): how many receipts are read at once; the rest wait their turn.
+
+### Changed
+- **Much better automatic edge detection** in the crop step. The detector now ignores the printed text, tries several ways of finding the paper and keeps the outline whose sides actually sit on a paper edge. It handles torn or rounded corners, receipts split by a fold or shadow, small receipts shot from a distance and long receipts that run off the frame, and falls back to the block of printed text when the paper edge can't be seen. When nothing is convincing it still leaves the default corners rather than guessing.
+- At most two receipts are read at the same time (previously every receipt in a batch was processed at once), which keeps memory use and AI request bursts in check on small devices.
+- Upload progress is now polled once a second instead of streamed.
+- `POST /api/receipts/upload` and `/upload-stream` run on the same background jobs: a failed upload now leaves a "Failed" receipt behind, the stream starts with an `accepted` event carrying the receipt id, and closing the stream no longer stops the processing.
+- The dashboard's receipt count and "pending approval" count no longer include receipts that are still processing or failed.
+
+### Fixed
+- Closing the upload window's connection mid-way could leave a receipt with no items, or image files with no receipt. A receipt's extracted data is now saved in a single step.
+
 ## [2.3.1] - 2026-11-21
 
 ### Changed

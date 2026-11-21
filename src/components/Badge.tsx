@@ -1,23 +1,31 @@
 import { cn } from '../lib/utils'
 
-type Variant = 'verified' | 'review' | 'pending'
+import type { ReceiptStatus } from '../types'
+
+type Variant = ReceiptStatus
 
 const styles: Record<Variant, string> = {
-  verified: 'bg-green-100 text-green-700',
-  review:   'bg-orange-100 text-orange-700',
-  pending:  'bg-gray-100 text-gray-500',
+  verified:   'bg-green-100 text-green-700',
+  review:     'bg-orange-100 text-orange-700',
+  pending:    'bg-gray-100 text-gray-500',
+  processing: 'bg-sky-100 text-sky-700 animate-pulse',
+  failed:     'bg-red-100 text-red-700',
 }
 
 const labels: Record<Variant, string> = {
-  verified: '✓ Approved',
-  review:   'Review Math',
-  pending:  'Pending',
+  verified:   '✓ Approved',
+  review:     'Review Math',
+  pending:    'Pending',
+  processing: 'Processing…',
+  failed:     'Failed',
 }
 
 const icons: Record<Variant, string> = {
-  verified: '✓',
-  review:   '!',
-  pending:  '·',
+  verified:   '✓',
+  review:     '!',
+  pending:    '·',
+  processing: '…',
+  failed:     '✕',
 }
 
 interface BadgeProps {

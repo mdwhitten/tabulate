@@ -8,6 +8,7 @@ import time
 
 from db.database import init_db
 from routers import receipts, items, categories, trends, ynab
+from services.receipt_jobs import jobs as receipt_jobs
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -73,6 +74,14 @@ async def on_startup():
     logger.info("Starting Tabulate v0.1.0  LOG_LEVEL=%s  DB=%s",
                 LOG_LEVEL, os.environ.get("DB_PATH", "(default)"))
     await init_db()
+    # Pick up uploads that were accepted but not finished before a restart.
+    await receipts.resume_processing()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    # Stop in-flight processing; those receipts stay 'processing' and resume on start.
+    await receipt_jobs.shutdown()
 
 @app.get("/api/health")
 async def health():

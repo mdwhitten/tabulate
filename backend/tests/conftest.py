@@ -57,7 +57,9 @@ CREATE TABLE receipts (
     status          TEXT DEFAULT 'pending',
     ynab_transaction_id TEXT,
     ynab_sync_status    TEXT,
-    ynab_synced_at      TEXT
+    ynab_synced_at      TEXT,
+    processing_job      TEXT,
+    processing_error    TEXT
 );
 
 CREATE TABLE line_items (

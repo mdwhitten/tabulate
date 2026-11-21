@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { jscanifyToCropCorners, cropCornersToJscanify, outputSize, plausibleQuad } from './scanner'
+import { cropCornersToJscanify, outputSize, plausibleQuad } from './scanner'
 import type { CropCorners } from '../api/receipts'
 
 describe('plausibleQuad', () => {
@@ -12,50 +12,19 @@ describe('plausibleQuad', () => {
   it('rejects a tiny speck', () => {
     expect(plausibleQuad([[0.4, 0.4], [0.45, 0.4], [0.45, 0.45], [0.4, 0.45]])).toBe(false)
   })
-})
-
-describe('jscanifyToCropCorners', () => {
-  it('maps jscanify corners to fractional CropCorners in TL,TR,BR,BL order', () => {
-    const result = jscanifyToCropCorners(
-      {
-        topLeftCorner:     { x: 0,   y: 0 },
-        topRightCorner:    { x: 100, y: 0 },
-        bottomRightCorner: { x: 100, y: 200 },
-        bottomLeftCorner:  { x: 0,   y: 200 },
-      },
-      100, 200,
-    )
-    expect(result).toEqual([[0, 0], [1, 0], [1, 1], [0, 1]])
-  })
-  it('returns null when a corner is missing', () => {
-    expect(jscanifyToCropCorners({ topLeftCorner: { x: 0, y: 0 } }, 100, 100)).toBeNull()
-  })
-  it('returns null when the image has no area', () => {
-    const full = {
-      topLeftCorner: { x: 0, y: 0 }, topRightCorner: { x: 1, y: 0 },
-      bottomRightCorner: { x: 1, y: 1 }, bottomLeftCorner: { x: 0, y: 1 },
-    }
-    expect(jscanifyToCropCorners(full, 0, 100)).toBeNull()
+  it('accepts a small receipt shot from a distance', () => {
+    expect(plausibleQuad([[0.4, 0.3], [0.62, 0.3], [0.62, 0.65], [0.4, 0.65]])).toBe(true)
   })
 })
 
 describe('cropCornersToJscanify', () => {
-  it('maps fractional CropCorners back to jscanify pixel corners', () => {
+  it('maps fractional CropCorners to jscanify pixel corners', () => {
     const c: CropCorners = [[0, 0], [1, 0], [1, 1], [0, 1]]
     expect(cropCornersToJscanify(c, 100, 200)).toEqual({
       topLeftCorner:     { x: 0,   y: 0 },
       topRightCorner:    { x: 100, y: 0 },
       bottomRightCorner: { x: 100, y: 200 },
       bottomLeftCorner:  { x: 0,   y: 200 },
-    })
-  })
-  it('round-trips with jscanifyToCropCorners', () => {
-    const c: CropCorners = [[0.1, 0.2], [0.9, 0.15], [0.85, 0.95], [0.12, 0.9]]
-    const back = jscanifyToCropCorners(cropCornersToJscanify(c, 400, 600), 400, 600)
-    expect(back).not.toBeNull()
-    back!.forEach((pt, i) => {
-      expect(pt[0]).toBeCloseTo(c[i][0], 6)
-      expect(pt[1]).toBeCloseTo(c[i][1], 6)
     })
   })
 })

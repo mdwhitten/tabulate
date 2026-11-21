@@ -12,7 +12,7 @@ import { UploadModal } from './components/UploadModal'
 import { DuplicateWarningModal } from './components/DuplicateWarningModal'
 import { useReceipt, useReceiptList } from './hooks/useReceipts'
 import { useCategoryList } from './hooks/useCategories'
-import { useSaveReceipt, useDeleteReceipt } from './hooks/useReceipts'
+import { useSaveReceipt, useDeleteReceipt, useReprocessReceipt } from './hooks/useReceipts'
 import type { Page } from './types'
 import type { ProcessingResult } from './api/receipts'
 import { checkDuplicates, deleteReceipt as deleteReceiptApi } from './api/receipts'
@@ -20,7 +20,7 @@ import type { Receipt, SaveReceiptBody, DuplicateMatch } from './types'
 import { advanceBatch, batchPosition } from './lib/batch'
 import { EMPTY_FILTER, filterReceipts, adjacentIds } from './lib/receiptFilter'
 import type { ReceiptFilter } from './lib/receiptFilter'
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2, Pencil, SkipForward } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Loader2, Save, Camera, CheckCircle, MoreVertical, RotateCcw, Trash2, Pencil, SkipForward } from 'lucide-react'
 import './index.css'
 
 // ── Ingress-aware URL helpers ─────────────────────────────────────────────────
@@ -105,6 +105,7 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDu
   const { data: categories = [] } = useCategoryList()
   const save   = useSaveReceipt(receiptId)
   const del    = useDeleteReceipt()
+  const reprocess = useReprocessReceipt()
 
   // Build a Receipt-compatible object from ProcessingResult if fresh
   // Memoize so the reference is stable (prevents unnecessary resets in ReviewReceipt)
@@ -148,6 +149,55 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDu
     )
   }
 
+  async function handleDelete() {
+    if (!confirm('Delete this receipt?')) return
+    await del.mutateAsync(receiptId)
+    onClose()
+  }
+
+  // Uploaded but not read yet: nothing to review. useReceipt keeps polling, so
+  // the review appears by itself once the server is done.
+  if (receipt?.status === 'processing') {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-32 text-center" data-testid="receipt-processing">
+        <Loader2 className="w-8 h-8 text-[#03a9f4] animate-spin" />
+        <p className="text-sm font-medium text-gray-800">This receipt is still being read</p>
+        <p className="text-xs text-gray-400 max-w-xs">
+          It was uploaded safely and is being processed in the background. This page will update when it is ready.
+        </p>
+      </div>
+    )
+  }
+
+  if (receipt?.status === 'failed') {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-32 text-center" data-testid="receipt-failed">
+        <AlertCircle className="w-8 h-8 text-red-400" />
+        <p className="text-sm font-medium text-gray-800">This receipt could not be read</p>
+        <p className="text-xs text-red-500 max-w-sm">
+          {reprocess.error?.message ?? receipt.processing_error ?? 'Processing failed.'}
+        </p>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            onClick={() => reprocess.mutate(receiptId)}
+            disabled={reprocess.isPending}
+            className="flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg bg-[#03a9f4] text-white hover:bg-[#0290d1] transition-colors disabled:opacity-50"
+          >
+            <RotateCcw className="w-4 h-4" />
+            Try again
+          </button>
+          <button
+            onClick={handleDelete}
+            className="flex items-center gap-1.5 h-9 px-3 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   async function handleSave(body: SaveReceiptBody) {
     // If the upload was missing total or date, the user filled them in during
     // review — check for duplicates now (upload-time check was skipped).
@@ -175,12 +225,6 @@ function ReviewLoader({ receiptId, freshResult, onSaved, onClose, onRescan, onDu
       onSaved()
     }
     // Draft save: stay on page — React Query invalidation refreshes data
-  }
-
-  async function handleDelete() {
-    if (!confirm('Delete this receipt?')) return
-    await del.mutateAsync(receiptId)
-    onClose()
   }
 
   return (

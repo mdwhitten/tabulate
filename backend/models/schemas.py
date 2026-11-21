@@ -71,6 +71,7 @@ class Receipt(ReceiptBase):
     status: str = "pending"
     ynab_sync_status: Optional[str] = None
     ynab_transaction_id: Optional[str] = None
+    processing_error: Optional[str] = None   # why processing failed (status 'failed')
     items: List[LineItem] = []
 
     class Config:
@@ -154,3 +155,17 @@ class ProcessingResult(BaseModel):
     thumbnail_path: Optional[str] = None
     categorization_failed: bool = False
     items: List[LineItem]
+
+
+class EnqueuedReceipt(BaseModel):
+    """An upload that was accepted and is being processed in the background."""
+    receipt_id: int
+    status: str   # 'processing'
+
+class ReceiptProcessingStatus(BaseModel):
+    """Polled state of an enqueued receipt (GET /api/receipts/status)."""
+    id: int
+    status: str                                  # processing | failed | pending | verified
+    progress: Optional[dict] = None              # live stage while processing
+    error: Optional[str] = None                  # why it failed
+    result: Optional[ProcessingResult] = None    # once processed, if finished recently

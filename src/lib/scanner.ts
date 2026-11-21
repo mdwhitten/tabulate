@@ -1,8 +1,7 @@
 /**
- * Client-side document scanner — thin wrapper over the vendored jscanify +
- * OpenCV.js (see ./opencv). Provides real paper-quad detection and true
- * perspective correction in the browser, replacing the weak server-side
- * axis-aligned edge detector.
+ * Client-side document scanner on the vendored OpenCV.js (see ./opencv):
+ * paper-quad detection (./quadDetect) and true perspective correction
+ * (jscanify's warp), replacing the weak server-side axis-aligned detector.
  *
  * Callers must `await loadScanner()` (from ./opencv) before invoking
  * `detectCorners` / `extractCorrected`, and should catch failures to fall back
@@ -11,6 +10,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { CropCorners } from '../api/receipts'
+import { DETECT_MAX, detectQuad } from './quadDetect'
 
 interface Point { x: number; y: number }
 
@@ -25,24 +25,6 @@ export interface JscanifyCorners {
 const WORK_MAX = 2000
 
 // ── Pure corner-format helpers (unit-tested; no OpenCV / DOM needed) ─────────
-
-/**
- * Convert jscanify's corner object (pixel coords) to fractional CropCorners
- * ordered TL, TR, BR, BL. Returns null if any corner is missing or the image
- * has no area.
- */
-export function jscanifyToCropCorners(
-  c: JscanifyCorners, width: number, height: number,
-): CropCorners | null {
-  const { topLeftCorner: tl, topRightCorner: tr, bottomRightCorner: br, bottomLeftCorner: bl } = c
-  if (!tl || !tr || !br || !bl || width <= 0 || height <= 0) return null
-  return [
-    [tl.x / width, tl.y / height],
-    [tr.x / width, tr.y / height],
-    [br.x / width, br.y / height],
-    [bl.x / width, bl.y / height],
-  ]
-}
 
 /** Convert fractional CropCorners (TL, TR, BR, BL) to jscanify pixel corners. */
 export function cropCornersToJscanify(
@@ -133,7 +115,8 @@ function toWorkCanvas(source: Source): HTMLCanvasElement {
  * tiny speck — which is worse than showing default corners for the user to drag.
  */
 export function plausibleQuad(c: CropCorners): boolean {
-  // Shoelace area in fractional units (0–1 of the image).
+  // Shoelace area in fractional units (0–1 of the image). A short receipt
+  // shot from a distance can be well under a tenth of the frame.
   let area = 0
   for (let i = 0; i < 4; i++) {
     const [x1, y1] = c[i]
@@ -141,7 +124,7 @@ export function plausibleQuad(c: CropCorners): boolean {
     area += x1 * y2 - x2 * y1
   }
   area = Math.abs(area) / 2
-  if (area < 0.10 || area > 0.98) return false
+  if (area < 0.04 || area > 0.98) return false
   // Reject a box that spans essentially the entire frame in both axes.
   const xs = c.map(p => p[0])
   const ys = c.map(p => p[1])
@@ -151,95 +134,41 @@ export function plausibleQuad(c: CropCorners): boolean {
   return true
 }
 
-/** Order 4 points as TL, TR, BR, BL using coordinate sums/diffs. */
-function orderCorners(pts: { x: number; y: number }[], w: number, h: number): CropCorners {
-  const bySum  = [...pts].sort((a, b) => (a.x + a.y) - (b.x + b.y))
-  const byDiff = [...pts].sort((a, b) => (a.x - a.y) - (b.x - b.y))
-  const tl = bySum[0], br = bySum[3]        // smallest / largest x+y
-  const bl = byDiff[0], tr = byDiff[3]      // smallest / largest x−y
-  return [
-    [tl.x / w, tl.y / h], [tr.x / w, tr.y / h],
-    [br.x / w, br.y / h], [bl.x / w, bl.y / h],
-  ]
-}
-
-/**
- * Custom quad detector: Canny + dilate → largest 4-point convex `approxPolyDP`
- * contour. More reliable than jscanify's `minAreaRect` extremes for skewed
- * receipts. Returns fractional corners or null. Fully defensive — any OpenCV
- * error yields null (callers fall back to jscanify, then to default corners).
- */
-function detectQuadApprox(cv: any, work: HTMLCanvasElement): CropCorners | null {
-  const src = cv.imread(work)
-  const gray = new cv.Mat()
-  const edges = new cv.Mat()
-  const contours = new cv.MatVector()
-  const hierarchy = new cv.Mat()
-  let best: any = null
-  try {
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY)
-    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT)
-    cv.Canny(gray, edges, 50, 150)
-    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5))
-    cv.dilate(edges, edges, kernel)
-    kernel.delete()
-    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
-    let bestArea = 0
-    for (let i = 0; i < contours.size(); i++) {
-      const c = contours.get(i)
-      const area = cv.contourArea(c)
-      if (area > bestArea) {
-        const approx = new cv.Mat()
-        cv.approxPolyDP(c, approx, 0.02 * cv.arcLength(c, true), true)
-        if (approx.rows === 4 && cv.isContourConvex(approx)) {
-          if (best) best.delete()
-          best = approx
-          bestArea = area
-        } else {
-          approx.delete()
-        }
-      }
-      c.delete()
-    }
-    if (!best) return null
-    const pts = [0, 1, 2, 3].map(i => ({ x: best.data32S[i * 2], y: best.data32S[i * 2 + 1] }))
-    const corners = orderCorners(pts, work.width, work.height)
-    return plausibleQuad(corners) ? corners : null
-  } catch {
-    return null
-  } finally {
-    if (best) best.delete()
-    src.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete()
-  }
+/** Draw the source into a small canvas (long side ≤ `max`) for detection. */
+function toCanvas(source: Source, max: number): HTMLCanvasElement {
+  const { w: sw, h: sh } = sourceSize(source)
+  const scale = Math.min(1, max / Math.max(sw || 1, sh || 1))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(sw * scale))
+  canvas.height = Math.max(1, Math.round(sh * scale))
+  const ctx = canvas.getContext('2d')!
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
+  return canvas
 }
 
 /**
  * Detect the receipt/paper quad in an image. Returns fractional corners
- * (TL, TR, BR, BL) or null if OpenCV can't find a confident quad.
+ * (TL, TR, BR, BL) or null if no confident quad is found (see ./quadDetect).
  */
 export function detectCorners(source: Source): CropCorners | null {
   const cv = window.cv
-  const Jscanify = window.jscanify
-  if (!cv || !Jscanify) return null
-  const work = toWorkCanvas(source)
-
-  // Prefer the approxPolyDP detector; gate its result.
-  const approx = detectQuadApprox(cv, work)
-  if (approx) return approx
-
-  // Fall back to jscanify's detector, also gated.
-  const scanner = new Jscanify()
-  const mat = cv.imread(work)
+  if (!cv) return null
+  const work = toCanvas(source, DETECT_MAX)
+  let mat: any = null
   try {
-    const contour = scanner.findPaperContour(mat)
-    if (!contour) return null
-    const corners = jscanifyToCropCorners(scanner.getCornerPoints(contour), work.width, work.height)
-    return corners && plausibleQuad(corners) ? corners : null
+    mat = cv.imread(work)
+    const quad = detectQuad(cv, mat)
+    if (!quad) return null
+    const corners = quad.map(p => [
+      Math.max(0, Math.min(1, p.x / (work.width - 1))),
+      Math.max(0, Math.min(1, p.y / (work.height - 1))),
+    ]) as CropCorners
+    return plausibleQuad(corners) ? corners : null
   } catch {
     return null
   } finally {
-    mat.delete()
+    if (mat) mat.delete()
   }
 }
 

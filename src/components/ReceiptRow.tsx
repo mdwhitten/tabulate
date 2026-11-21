@@ -1,5 +1,6 @@
 import { storeIcon, fmt, relativeTime } from '../lib/utils'
 import { Badge } from './Badge'
+import { receiptDisplayName, receiptStatusNote, statusVariant } from '../lib/receiptFilter'
 import type { ReceiptSummary } from '../types'
 
 interface ReceiptRowProps {
@@ -25,16 +26,16 @@ export function ReceiptRow({ receipt, onClick }: ReceiptRowProps) {
       {/* Name + date */}
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-gray-900 truncate">
-          {receipt.store_name ?? 'Unknown Store'}
+          {receiptDisplayName(receipt)}
         </p>
         <p className="text-xs text-gray-400 mt-0.5">
-          {date} · {receipt.item_count} items
+          {date} · {receiptStatusNote(receipt) ?? `${receipt.item_count} items`}
         </p>
       </div>
 
       {/* Total + badge */}
       <div className="flex items-center gap-3 shrink-0">
-        <Badge variant={receipt.status === 'verified' ? 'verified' : receipt.status === 'review' ? 'review' : 'pending'} />
+        <Badge variant={statusVariant(receipt.status)} />
         <span className="text-sm font-mono font-semibold text-gray-800 tabular-nums w-16 text-right">
           {receipt.total != null ? fmt(receipt.total) : '—'}
         </span>
