@@ -5,7 +5,7 @@ Covers:
 - POST /upload on the Claude path: categories from Claude's hints are stored
   without a separate categorization call, processing gets the full-resolution
   image while the stored copy is width-capped, PDF text is passed as a hint
-- POST /upload-stream: NDJSON progress events in order then a result matching
+- POST /upload-stream: server-sent progress events in order then a result matching
   ProcessingResult, error events for failures inside processing, normal 422s
   for validation errors, DB connection cleanup and client disconnects
 
@@ -85,10 +85,17 @@ def client_for(app):
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
-def parse_ndjson(text: str) -> list[dict]:
-    lines = text.splitlines()
-    assert lines and all(lines), "every NDJSON line must be non-empty"
-    return [json.loads(line) for line in lines]
+def parse_sse(text: str) -> list[dict]:
+    """Parse the server-sent events body: one `data: <json>` line per event,
+    each event terminated by a blank line."""
+    blocks = text.split("\n\n")
+    assert blocks[-1] == "", "the stream must end with a complete event"
+    events = []
+    for block in blocks[:-1]:
+        assert block.startswith("data: ") and "\n" not in block, block
+        events.append(json.loads(block[len("data: "):]))
+    assert events
+    return events
 
 
 # ── /upload on the Claude path ───────────────────────────────────────────────
@@ -188,8 +195,11 @@ class TestUploadStream:
                 files={"file": ("r.jpg", make_jpeg(300, 600), "image/jpeg")},
             )
         assert resp.status_code == 200
-        assert resp.headers["content-type"].startswith("application/x-ndjson")
-        events = parse_ndjson(resp.text)
+        # Must stay text/event-stream: Home Assistant ingress compresses (and so
+        # buffers) application/*json* responses, which froze the progress UI.
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        assert resp.headers["cache-control"] == "no-cache"
+        events = parse_sse(resp.text)
 
         progress = [e for e in events if e["type"] == "progress"]
         assert [e["stage"] for e in progress] == [
@@ -226,7 +236,7 @@ class TestUploadStream:
                 "/api/receipts/upload-stream",
                 files={"file": ("r.jpg", make_jpeg(300, 600), "image/jpeg")},
             )
-        events = parse_ndjson(resp.text)
+        events = parse_sse(resp.text)
         reading = [e.get("method") for e in events if e.get("stage") == "reading"]
         assert reading == ["ai", "ocr"]
         assert events[-1]["type"] == "result"
@@ -251,7 +261,7 @@ class TestUploadStream:
                 "/api/receipts/upload-stream",
                 files={"file": ("r.jpg", make_jpeg(300, 600), "image/jpeg")},
             )
-        events = parse_ndjson(resp.text)
+        events = parse_sse(resp.text)
         reading = [e.get("method") for e in events if e.get("stage") == "reading"]
         assert reading == ["ocr"]
 
@@ -263,7 +273,7 @@ class TestUploadStream:
                 files={"file": ("bad.pdf", b"%PDF-garbage", "application/pdf")},
             )
         assert resp.status_code == 200
-        events = parse_ndjson(resp.text)
+        events = parse_sse(resp.text)
         assert events[0] == {"type": "progress", "stage": "preparing"}
         assert events[-1]["type"] == "error"
         assert events[-1]["status"] == 422
@@ -279,7 +289,7 @@ class TestUploadStream:
                 "/api/receipts/upload-stream",
                 files={"file": ("r.jpg", make_jpeg(300, 600), "image/jpeg")},
             )
-        events = parse_ndjson(resp.text)
+        events = parse_sse(resp.text)
         assert events[-1] == {"type": "error", "status": 500, "detail": "Receipt processing failed"}
 
     @pytest.mark.asyncio
@@ -328,7 +338,7 @@ class TestUploadStream:
                 store_name_hint=None, crop_corners=None, original=None,
             )
             body = response.body_iterator
-            first = json.loads(await body.__anext__())
+            first = parse_sse(await body.__anext__())[0]
             assert first == {"type": "progress", "stage": "preparing"}
             await asyncio.wait_for(started.wait(), timeout=5)
 

@@ -36,12 +36,13 @@ function streamResponse(chunks: string[], init: ResponseInit = {}): Response {
   })
   return new Response(body, {
     status: 200,
-    headers: { 'Content-Type': 'application/x-ndjson' },
+    headers: { 'Content-Type': 'text/event-stream' },
     ...init,
   })
 }
 
-const line = (o: unknown) => JSON.stringify(o) + '\n'
+/** One server-sent event, as the backend writes it. */
+const line = (o: unknown) => `data: ${JSON.stringify(o)}\n\n`
 
 let fetchMock: ReturnType<typeof vi.fn>
 
@@ -114,6 +115,25 @@ describe('uploadReceipt', () => {
     // Unknown stages are passed through; the UI reducer ignores them.
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ stage: 'mystery' }))
     warn.mockRestore()
+  })
+
+  it('reads SSE events split across chunks and skips comment lines', async () => {
+    const text = ': stream open\n\n' + line({ type: 'progress', stage: 'preparing' }) + line({ type: 'result', data: RESULT })
+    fetchMock.mockResolvedValue(streamResponse([text.slice(0, 7), text.slice(7, 40), text.slice(40)]))
+    const onProgress = vi.fn()
+    await expect(uploadReceipt(new Blob(['x']), null, null, onProgress)).resolves.toEqual(RESULT)
+    expect(onProgress).toHaveBeenCalledTimes(1)
+    expect(onProgress).toHaveBeenCalledWith({ type: 'progress', stage: 'preparing' })
+  })
+
+  it('still accepts plain NDJSON lines', async () => {
+    fetchMock.mockResolvedValue(streamResponse([
+      JSON.stringify({ type: 'progress', stage: 'preparing' }) + '\n',
+      JSON.stringify({ type: 'result', data: RESULT }) + '\n',
+    ]))
+    const onProgress = vi.fn()
+    await expect(uploadReceipt(new Blob(['x']), null, null, onProgress)).resolves.toEqual(RESULT)
+    expect(onProgress).toHaveBeenCalledTimes(1)
   })
 
   it('works without an onProgress callback', async () => {

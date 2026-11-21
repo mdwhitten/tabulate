@@ -25,11 +25,12 @@ function processingResult(id: number) {
   }
 }
 
-const ndjson = (events: unknown[]) => events.map(e => JSON.stringify(e)).join('\n') + '\n'
+/** Server-sent events body, as the backend writes it: one `data:` line per event. */
+const sse = (events: unknown[]) => events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')
 
-/** A full NDJSON progress stream ending with the processing result. */
+/** A full progress stream ending with the processing result. */
 function uploadStreamBody(id: number) {
-  return ndjson([
+  return sse([
     { type: 'progress', stage: 'preparing' },
     { type: 'progress', stage: 'reading', method: 'ai' },
     { type: 'progress', stage: 'reading', method: 'ai', items: 2 },
@@ -58,7 +59,7 @@ async function mockUploadFlow(page: Page) {
   let nextId = 1001
   await mockScanner(page)
   await page.route('**/api/receipts/upload-stream', route =>
-    route.fulfill({ contentType: 'application/x-ndjson', body: uploadStreamBody(nextId++) }),
+    route.fulfill({ contentType: 'text/event-stream', body: uploadStreamBody(nextId++) }),
   )
 }
 
@@ -83,7 +84,7 @@ async function mockControllableUploadStream(page: Page) {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
       if (url.includes('/api/receipts/upload-stream')) {
         const body = new ReadableStream<Uint8Array>({ start(c) { g.__uploadStream = c } })
-        return Promise.resolve(new Response(body, { headers: { 'Content-Type': 'application/x-ndjson' } }))
+        return Promise.resolve(new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }))
       }
       return realFetch(input, init)
     }
@@ -96,7 +97,7 @@ async function pushUploadLine(page: Page, event: unknown, close = false) {
     const c = (globalThis as unknown as StreamGlobals).__uploadStream!
     c.enqueue(new TextEncoder().encode(line))
     if (end) c.close()
-  }, [JSON.stringify(event) + '\n', close] as const)
+  }, [`data: ${JSON.stringify(event)}\n\n`, close] as const)
 }
 
 /** Open the modal, queue one image and skip the crop step to start uploading. */
@@ -218,8 +219,8 @@ test.describe('Upload flow', () => {
     await mockScanner(page)
     await page.route('**/api/receipts/upload-stream', route =>
       route.fulfill({
-        contentType: 'application/x-ndjson',
-        body: ndjson([
+        contentType: 'text/event-stream',
+        body: sse([
           { type: 'progress', stage: 'preparing' },
           { type: 'error', status: 422, detail: 'Could not read receipt' },
         ]),

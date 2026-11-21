@@ -21,3 +21,21 @@ export function flushNdjson(rest: string): string[] {
   const line = rest.trim()
   return line ? [line] : []
 }
+
+/**
+ * Extract the JSON payload from one line of the upload stream.
+ *
+ * The server sends server-sent events (`data: {...}` lines separated by blank
+ * lines); plain NDJSON lines are accepted too. Returns null for lines that
+ * carry no payload: SSE comments (`: ...`) and other SSE fields
+ * (`event:`, `id:`, `retry:`).
+ */
+export function eventPayload(line: string): string | null {
+  if (line.startsWith(':')) return null
+  if (line.startsWith('data:')) {
+    const rest = line.slice(5)
+    return rest.startsWith(' ') ? rest.slice(1) : rest
+  }
+  if (/^(event|id|retry):/.test(line)) return null
+  return line
+}

@@ -86,7 +86,8 @@ Each hooks file exports a `*Keys` object (e.g. `receiptKeys`, `categoryKeys`) us
 | `SaveReceiptBody` | `items[]`, `status`, `store_name?` |
 | `ItemMapping` | `source` field (NOT `category_source`) |
 
-`POST /api/receipts/upload-stream` takes the same form fields as `/upload` but returns NDJSON (`application/x-ndjson`), one JSON object per line:
+`POST /api/receipts/upload-stream` takes the same form fields as `/upload` but returns server-sent events (`text/event-stream`), one `data: <json>` line per event:
+- Keep it `text/event-stream`: Home Assistant ingress gzips `application/*json*` responses, which holds every event until the stream ends (the progress UI then never moves)
 - `{"type":"progress","stage":...}` — stages in order: `preparing`, `reading` (`method: "ai"`, then repeated with `items: N` as items stream in; `method: "ocr"` if it falls back to Tesseract), `rechecking` (`problems: N`, only when totals don't reconcile), `checking`, `categorizing`, `saving`
 - then exactly one `{"type":"result","data":<ProcessingResult>}` or `{"type":"error","status":<int>,"detail":<str>}`
 - Validation errors (unsupported type, too large, missing file) are normal 4xx JSON responses before streaming starts
