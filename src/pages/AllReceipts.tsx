@@ -2,7 +2,7 @@ import { Search, Loader2, Trash2 } from 'lucide-react'
 import { useReceiptList, useDeleteReceipt } from '../hooks/useReceipts'
 import { storeIcon, fmt } from '../lib/utils'
 import { Badge } from '../components/Badge'
-import { STATUS_FILTERS, filterReceipts } from '../lib/receiptFilter'
+import { STATUS_FILTERS, filterReceipts, receiptDisplayName, statusVariant } from '../lib/receiptFilter'
 import type { ReceiptFilter } from '../lib/receiptFilter'
 import type { ReceiptSummary } from '../types'
 
@@ -129,7 +129,7 @@ function ReceiptTableRow({
 
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
-    if (confirm(`Delete receipt from ${r.store_name ?? 'Unknown'}?`)) {
+    if (confirm(`Delete receipt from ${receiptDisplayName(r, 'Unknown')}?`)) {
       deleteReceipt.mutate(r.id)
     }
   }
@@ -145,7 +145,7 @@ function ReceiptTableRow({
           <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-base shrink-0 group-hover:bg-gray-200 transition-colors">
             {storeIcon(r.store_name)}
           </div>
-          <span className="text-sm font-medium text-gray-900">{r.store_name ?? 'Unknown'}</span>
+          <span className="text-sm font-medium text-gray-900">{receiptDisplayName(r, 'Unknown')}</span>
         </div>
       </td>
       <td className="px-4 py-3.5 hidden sm:table-cell">
@@ -163,10 +163,10 @@ function ReceiptTableRow({
       </td>
       <td className="px-2 sm:px-5 py-3.5 text-right">
         <span className="sm:hidden">
-          <Badge variant={r.status === 'verified' ? 'verified' : r.status === 'review' ? 'review' : 'pending'} compact />
+          <Badge variant={statusVariant(r.status)} compact />
         </span>
         <span className="hidden sm:inline">
-          <Badge variant={r.status === 'verified' ? 'verified' : r.status === 'review' ? 'review' : 'pending'} />
+          <Badge variant={statusVariant(r.status)} />
         </span>
       </td>
       <td className="pr-3 py-3.5 text-right">

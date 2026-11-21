@@ -6,6 +6,7 @@ import { useReceiptList } from '../hooks/useReceipts'
 import { useMonthlyTrends, useDashboardSummary } from '../hooks/useTrends'
 import { useCategoryList } from '../hooks/useCategories'
 import { fmt } from '../lib/utils'
+import { awaitsApproval } from '../lib/receiptFilter'
 import type { Page } from '../types'
 
 interface DashboardProps {
@@ -44,7 +45,7 @@ export function Dashboard({ onNavigate, onOpenReceipt }: DashboardProps) {
     ? Math.round(Math.abs(monthDiff / prevMonthTotal) * 100)
     : 0
 
-  const pendingCount = receipts.filter(r => r.status !== 'verified').length
+  const pendingCount = receipts.filter(awaitsApproval).length
   const avgTrip      = summary?.avg_trip ?? null
 
   // Top category this month

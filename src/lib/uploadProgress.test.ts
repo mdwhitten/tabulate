@@ -110,8 +110,16 @@ describe('uploadProgressReducer', () => {
   })
 })
 
+describe('queued receipts', () => {
+  it('count as past the upload step while waiting for a free worker', () => {
+    expect(run([ev('queued')]).step).toBe(1)
+    expect(run([ev('queued'), ev('preparing')]).step).toBe(1)
+  })
+})
+
 describe('describeUploadEvent', () => {
   it('describes known stages', () => {
+    expect(describeUploadEvent(ev('queued'))).toBe('Waiting to start')
     expect(describeUploadEvent(ev('preparing'))).toBe('Preparing image')
     expect(describeUploadEvent(ev('reading', { method: 'ai' }))).toBe('Reading receipt with AI')
     expect(describeUploadEvent(ev('reading', { method: 'ai', items: 7 }))).toBe('Reading receipt with AI · 7 items found')

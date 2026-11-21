@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { filterReceipts, adjacentIds } from './receiptFilter'
+import {
+  filterReceipts, adjacentIds, awaitsApproval, receiptDisplayName, receiptStatusNote, statusVariant,
+} from './receiptFilter'
 import type { ReceiptSummary } from '../types'
 
 function r(id: number, over: Partial<ReceiptSummary> = {}): ReceiptSummary {
@@ -64,5 +66,49 @@ describe('adjacentIds', () => {
 
   it('returns index -1 when the id is absent', () => {
     expect(adjacentIds(list, 999)).toEqual({ prevId: null, nextId: null, index: -1, total: 3 })
+  })
+})
+
+describe('receipts that are still processing or failed', () => {
+  const processing = r(7, { status: 'processing', store_name: 'Unknown Store', total: null, item_count: 0 })
+  const failed = r(8, { status: 'failed', store_name: null, total: null, item_count: 0 })
+
+  it('are listed under All and Pending, not Approved', () => {
+    const list = [r(1, { status: 'verified' }), processing, failed]
+    expect(filterReceipts(list, { search: '', status: 'All' })).toHaveLength(3)
+    expect(filterReceipts(list, { search: '', status: 'Pending' }).map(x => x.id)).toEqual([7, 8])
+    expect(filterReceipts(list, { search: '', status: 'Approved' }).map(x => x.id)).toEqual([1])
+  })
+
+  it('do not count as awaiting approval', () => {
+    expect(awaitsApproval(processing)).toBe(false)
+    expect(awaitsApproval(failed)).toBe(false)
+    expect(awaitsApproval(r(1, { status: 'pending' }))).toBe(true)
+    expect(awaitsApproval(r(1, { status: 'review' }))).toBe(true)
+    expect(awaitsApproval(r(1, { status: 'verified' }))).toBe(false)
+  })
+
+  it('get a placeholder name instead of "Unknown Store"', () => {
+    expect(receiptDisplayName(processing)).toBe('New receipt')
+    expect(receiptDisplayName(failed)).toBe('New receipt')
+    // A store-name hint given at upload is kept.
+    expect(receiptDisplayName(r(9, { status: 'processing', store_name: 'Costco' }))).toBe('Costco')
+    // Processed receipts are unchanged.
+    expect(receiptDisplayName(r(1, { store_name: 'Unknown Store' }))).toBe('Unknown Store')
+    expect(receiptDisplayName(r(1, { store_name: null }), 'Unknown')).toBe('Unknown')
+  })
+
+  it('get a note in place of the item count', () => {
+    expect(receiptStatusNote(processing)).toBe('being read…')
+    expect(receiptStatusNote(failed)).toBe('could not be read')
+    expect(receiptStatusNote(r(1))).toBeNull()
+  })
+
+  it('map to their own badge, with unknown statuses reading as pending', () => {
+    expect(statusVariant('processing')).toBe('processing')
+    expect(statusVariant('failed')).toBe('failed')
+    expect(statusVariant('verified')).toBe('verified')
+    expect(statusVariant('something-new')).toBe('pending')
+    expect(statusVariant(null)).toBe('pending')
   })
 })

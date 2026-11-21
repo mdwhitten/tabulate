@@ -56,7 +56,7 @@ The app uses simple React state (`page` string in `App.tsx`) — no React Router
 ## Key Patterns
 
 ### ProcessingResult vs Receipt duality
-- Fresh upload → `ProcessingResult` (has `receipt_id`, `verification_message`)
+- Fresh upload → `ProcessingResult` (has `receipt_id`, `verification_message`), delivered by `GET /status` once processing finishes
 - Opened from list → `Receipt` (has `id`, no `verification_message`)
 - `ReviewLoader` in `App.tsx` normalizes both into a `Receipt` for `ReviewReceipt`
 
@@ -81,16 +81,28 @@ Each hooks file exports a `*Keys` object (e.g. `receiptKeys`, `categoryKeys`) us
 | Schema | Key fields |
 |---|---|
 | `ProcessingResult` | `receipt_id`, `verification_message`, `items[]`, `thumbnail_path` |
-| `Receipt` | `id`, `status`, `items[]`, `thumbnail_path` — NO `verification_message` |
+| `Receipt` | `id`, `status`, `items[]`, `thumbnail_path`, `processing_error` — NO `verification_message` |
 | `ReceiptSummary` | `id`, `item_count` — NO `items[]` |
 | `SaveReceiptBody` | `items[]`, `status`, `store_name?` |
 | `ItemMapping` | `source` field (NOT `category_source`) |
+| `ReceiptProcessingStatus` | `id`, `status`, `progress` (while processing), `error` (when failed), `result` (`ProcessingResult`, when done) |
 
-`POST /api/receipts/upload-stream` takes the same form fields as `/upload` but returns server-sent events (`text/event-stream`), one `data: <json>` line per event:
-- Keep it `text/event-stream`: Home Assistant ingress gzips `application/*json*` responses, which holds every event until the stream ends (the progress UI then never moves)
-- `{"type":"progress","stage":...}` — stages in order: `preparing`, `reading` (`method: "ai"`, then repeated with `items: N` as items stream in; `method: "ocr"` if it falls back to Tesseract), `rechecking` (`problems: N`, only when totals don't reconcile), `checking`, `categorizing`, `saving`
-- then exactly one `{"type":"result","data":<ProcessingResult>}` or `{"type":"error","status":<int>,"detail":<str>}`
-- Validation errors (unsupported type, too large, missing file) are normal 4xx JSON responses before streaming starts
+Receipt `status`: `processing` (upload accepted, being read in the background) → `pending` (read, awaiting review) → `verified` (approved); or `processing` → `failed` (`processing_error` says why; retryable).
+
+### Upload = accept, then process in the background
+
+- `POST /api/receipts/enqueue` (form: `file`, optional `original`, `store_name_hint`, `crop_corners`) stores the raw upload on disk, inserts the receipt as `processing` and returns `202 {receipt_id, status}` straight away. Processing then runs in a background job (`services/receipt_jobs.py`) that is **not** tied to the request — a client disconnect or page close doesn't stop it
+- `GET /api/receipts/status?ids=1,2,3` is what the UI polls: `progress` is a snapshot like `{"stage": "reading", "method": "ai", "items": 12}`. Stages in order: `queued` (waiting for a free worker), `preparing`, `reading` (`method: "ai"`, or `"ocr"` for the Tesseract fallback), `rechecking` (only when totals don't reconcile), `checking`, `categorizing`, `saving`
+- `POST /api/receipts/{id}/reprocess` retries a `failed` receipt from the upload kept on disk (the raw upload is deleted once processing succeeds)
+- At most `PROCESSING_CONCURRENCY` receipts are processed at once; the rest wait as `queued`
+- On startup `resume_processing()` re-queues every receipt still `processing`, so a restart loses nothing (it gives up after 3 interrupted attempts → `failed`). This assumes a single uvicorn process
+- A receipt's extracted data is written in one transaction at the end, so a `processing`/`failed` receipt has no items, total or image; `save`, `recategorize` and `replace-image` return 409 for it, and `DELETE` cancels its job
+- Validation errors (unsupported type, too large, missing file) are normal 4xx JSON responses and store nothing
+- `POST /api/receipts/upload` (waits, returns `ProcessingResult`) and `POST /api/receipts/upload-stream` (server-sent events: `accepted`, then `progress` events, then one `result` or `error`) run on the same jobs, for API clients. Keep the stream `text/event-stream`: Home Assistant ingress gzips `application/*json*` responses, which holds every event until the stream ends
+
+### Upload modal
+
+`UploadModal` sends each image to `/enqueue` the moment its crop is confirmed (PDFs immediately), while the user crops the next one, then polls `/status`. Its state machine is the pure reducer in `src/lib/uploadQueue.ts`. When every receipt is ready it hands the `ProcessingResult[]` to `App` for the review queue; once all uploads are accepted the modal can be closed and the receipts finish on their own, showing in the lists as "Processing…" (`useReceiptList` / `useReceipt` poll while anything is `processing`).
 
 ## Testing
 
@@ -148,6 +160,7 @@ ANTHROPIC_API_KEY=sk-ant-...      # Required for Claude extraction (Tesseract-on
 CLAUDE_MODEL=claude-haiku-5-5     # Optional, defaults shown
 CLAUDE_EFFORT=low                 # Optional: low | medium | high | xhigh | max
 STORED_IMAGE_MAX_WIDTH=1200       # Optional: max width (px) of stored receipt images
+PROCESSING_CONCURRENCY=2          # Optional: receipts processed at once (the rest queue)
 DB_PATH=/data/tabulate.db         # Optional, defaults shown
 IMAGE_DIR=/data/images            # Optional, defaults shown
 ```

@@ -1,6 +1,5 @@
 import { apiFetch, apiUrl } from './client'
-import { splitNdjson, flushNdjson, eventPayload } from '../lib/ndjson'
-import type { Receipt, ReceiptSummary, SaveReceiptBody, DuplicateMatch } from '../types'
+import type { Receipt, ReceiptStatus, ReceiptSummary, SaveReceiptBody, DuplicateMatch } from '../types'
 
 export interface ProcessingResult {
   receipt_id: number
@@ -28,12 +27,12 @@ export async function getReceipt(id: number): Promise<Receipt> {
 }
 
 /**
- * A progress event streamed by POST /receipts/upload-stream. Stages the UI
- * doesn't know about (and extra fields) must be tolerated.
+ * Progress of a receipt being processed, as reported by GET /receipts/status.
+ * Stages the UI doesn't know about (and extra fields) must be tolerated.
  */
 export interface UploadProgressEvent {
   type: 'progress'
-  stage: 'preparing' | 'reading' | 'rechecking' | 'checking' | 'categorizing' | 'saving' | (string & {})
+  stage: 'queued' | 'preparing' | 'reading' | 'rechecking' | 'checking' | 'categorizing' | 'saving' | (string & {})
   /** For `reading`: 'ai' (Claude Vision) or 'ocr' (Tesseract fallback). */
   method?: string
   /** For `reading` with method 'ai': items found so far. */
@@ -42,106 +41,86 @@ export interface UploadProgressEvent {
   problems?: number
 }
 
-type UploadStreamEvent =
-  | UploadProgressEvent
-  | { type: 'result'; data: ProcessingResult }
-  | { type: 'error'; status?: number; detail?: string }
+/** An upload the server has accepted and is processing in the background. */
+export interface EnqueuedReceipt {
+  receipt_id: number
+  status: string
+}
+
+async function errorDetail(res: Response): Promise<string> {
+  let detail = res.statusText
+  try { const b = await res.json(); detail = b.detail ?? detail } catch { /* ignore */ }
+  return detail
+}
 
 /**
- * Upload a receipt and process it, streaming progress.
+ * Hand a receipt to the server. Resolves as soon as the server has stored the
+ * upload (HTTP 202) — from then on it is processed in the background and
+ * survives this page closing or losing its connection. Follow it with
+ * `getProcessingStatus`.
  *
- * The server replies with server-sent events (one `data: {...}` line per
- * event): zero or more `progress` events followed by a final `result`
- * (resolved) or `error` (thrown). Validation failures come back as an ordinary
- * non-2xx JSON response before any streaming.
+ * When `file` is a client-side perspective-corrected scan, pass the pristine
+ * image as `original` so the crop can be redone from it later.
  */
-export async function uploadReceipt(
+export async function enqueueReceipt(
   file: File | Blob,
-  cropCorners?: [number, number][] | null,
   original?: File | Blob | null,
-  onProgress?: (event: UploadProgressEvent) => void,
-): Promise<ProcessingResult> {
+  signal?: AbortSignal,
+): Promise<EnqueuedReceipt> {
   const form = new FormData()
   // A client-side perspective-corrected scan arrives as a Blob (no name).
-  const filename = file instanceof File ? file.name : 'scan.jpg'
-  form.append('file', file, filename)
-  if (cropCorners) {
-    form.append('crop_corners', JSON.stringify(cropCorners))
-  }
-  // When `file` is a client-corrected scan, also send the pristine original so
-  // the crop can be redone from it later.
+  form.append('file', file, file instanceof File ? file.name : 'scan.jpg')
   if (original) {
     form.append('original', original, original instanceof File ? original.name : 'original.jpg')
   }
-  const res = await fetch(apiUrl('/receipts/upload-stream'), { method: 'POST', body: form })
-  if (!res.ok) {
-    let detail = res.statusText
-    try { const b = await res.json(); detail = b.detail ?? detail } catch { /* ignore */ }
-    throw new Error(`Upload failed: ${detail}`)
+  const res = await fetch(apiUrl('/receipts/enqueue'), { method: 'POST', body: form, signal })
+  if (!res.ok) throw new Error(`Upload failed: ${await errorDetail(res)}`)
+  return res.json()
+}
+
+/** Polled state of an enqueued receipt. */
+export interface ReceiptProcessingStatus {
+  id: number
+  status: ReceiptStatus
+  /** Live stage while `status` is 'processing'. */
+  progress: Omit<UploadProgressEvent, 'type'> | null
+  /** Why it failed, when `status` is 'failed'. */
+  error: string | null
+  /** The processed receipt, once done — null if the server no longer remembers it. */
+  result: ProcessingResult | null
+}
+
+/** Processing state of the given receipts. Receipts that no longer exist are left out. */
+export async function getProcessingStatus(ids: number[]): Promise<ReceiptProcessingStatus[]> {
+  if (ids.length === 0) return []
+  return apiFetch<ReceiptProcessingStatus[]>(`/receipts/status?ids=${ids.join(',')}`)
+}
+
+/** Retry a receipt whose processing failed (it goes back to 'processing'). */
+export async function reprocessReceipt(id: number): Promise<EnqueuedReceipt> {
+  return apiFetch<EnqueuedReceipt>(`/receipts/${id}/reprocess`, { method: 'POST' })
+}
+
+/**
+ * A ProcessingResult rebuilt from a stored receipt, for when the server no
+ * longer has the original result (e.g. it restarted mid-batch).
+ */
+export function resultFromReceipt(receipt: Receipt): ProcessingResult {
+  return {
+    receipt_id: receipt.id,
+    store_name: receipt.store_name ?? 'Unknown Store',
+    receipt_date: receipt.receipt_date,
+    ocr_raw: receipt.ocr_raw,
+    subtotal: null,
+    tax: receipt.tax,
+    discounts: 0,
+    total: receipt.total,
+    total_verified: receipt.total_verified,
+    verification_message: receipt.verification_message ?? '',
+    thumbnail_path: receipt.thumbnail_path,
+    categorization_failed: false,
+    items: receipt.items,
   }
-
-  // Held in an object so assignments inside the line handler stay visible to TS.
-  const outcome: { result?: ProcessingResult; error?: string } = {}
-
-  // Returns true once a terminal (result / error) event has been seen.
-  const handleLine = (line: string): boolean => {
-    const payload = eventPayload(line)
-    if (payload === null) return false
-    let event: UploadStreamEvent
-    try {
-      event = JSON.parse(payload) as UploadStreamEvent
-    } catch {
-      console.warn('Ignoring malformed upload-stream line:', line)
-      return false
-    }
-    if (!event || typeof event !== 'object') return false
-    if (event.type === 'progress') {
-      if (typeof event.stage === 'string') onProgress?.(event)
-      return false
-    }
-    if (event.type === 'result') {
-      outcome.result = event.data
-      return true
-    }
-    if (event.type === 'error') {
-      outcome.error = event.detail || (event.status ? `HTTP ${event.status}` : 'unknown error')
-      return true
-    }
-    return false   // unknown event type — ignore
-  }
-
-  const consume = (lines: string[]): boolean => lines.some(handleLine)
-
-  if (res.body) {
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let rest = ''
-    let finished = false
-    try {
-      while (!finished) {
-        const { value, done } = await reader.read()
-        if (done) {
-          const tail = splitNdjson(rest, decoder.decode())
-          finished = consume([...tail.lines, ...flushNdjson(tail.rest)])
-          break
-        }
-        const split = splitNdjson(rest, decoder.decode(value, { stream: true }))
-        rest = split.rest
-        finished = consume(split.lines)
-      }
-    } finally {
-      // Stop reading once the terminal event arrived (no-op if the stream ended).
-      reader.cancel().catch(() => { /* ignore */ })
-    }
-  } else {
-    // No streaming body available — parse the whole response at once.
-    const { lines, rest } = splitNdjson('', await res.text())
-    consume([...lines, ...flushNdjson(rest)])
-  }
-
-  if (outcome.error !== undefined) throw new Error(`Upload failed: ${outcome.error}`)
-  if (!outcome.result) throw new Error('Upload failed: connection closed before processing finished')
-  return outcome.result
 }
 
 export async function saveReceipt(

@@ -1,4 +1,4 @@
-import type { ReceiptSummary } from '../types'
+import type { ReceiptStatus, ReceiptSummary } from '../types'
 
 export const STATUS_FILTERS = ['All', 'Approved', 'Pending'] as const
 export type StatusFilter = typeof STATUS_FILTERS[number]
@@ -43,4 +43,35 @@ export function adjacentIds(receipts: ReceiptSummary[], currentId: number): Adja
     index,
     total: receipts.length,
   }
+}
+
+/** True for receipts that have been read and are waiting for the user's approval. */
+export function awaitsApproval(r: Pick<ReceiptSummary, 'status'>): boolean {
+  return r.status === 'pending' || r.status === 'review'
+}
+
+/**
+ * Name to show for a receipt in lists. One that is still being read has no
+ * store name yet, so it gets a placeholder instead of "Unknown Store".
+ */
+export function receiptDisplayName(
+  r: Pick<ReceiptSummary, 'store_name' | 'status'>, unknown = 'Unknown Store',
+): string {
+  const named = r.store_name && r.store_name !== 'Unknown Store' ? r.store_name : null
+  if (r.status === 'processing' || r.status === 'failed') return named ?? 'New receipt'
+  return r.store_name ?? unknown
+}
+
+/** Short note replacing the item count for a receipt that hasn't been read (yet). */
+export function receiptStatusNote(r: Pick<ReceiptSummary, 'status'>): string | null {
+  if (r.status === 'processing') return 'being read…'
+  if (r.status === 'failed') return 'could not be read'
+  return null
+}
+
+/** Badge variant for a receipt status (anything unrecognised reads as pending). */
+export function statusVariant(status: string | null | undefined): ReceiptStatus {
+  return status === 'verified' || status === 'review' || status === 'processing' || status === 'failed'
+    ? status
+    : 'pending'
 }

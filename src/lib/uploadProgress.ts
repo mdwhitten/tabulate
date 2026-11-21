@@ -1,12 +1,12 @@
 import type { UploadProgressEvent } from '../api/receipts'
 
 /**
- * Maps streamed upload progress events (from POST /receipts/upload-stream)
+ * Maps a receipt's processing progress (polled from GET /receipts/status)
  * onto the step list shown in the upload modal.
  *
  * Steps:
- *   0 Uploading image        — until the first server event arrives
- *   1 Preparing image        — `preparing`
+ *   0 Uploading image        — until the server has accepted the upload
+ *   1 Preparing image        — `queued` (waiting for a free worker), `preparing`
  *   2 Reading receipt        — `reading` (AI or OCR fallback), live item count
  *   3 Checking totals        — `checking`, or `rechecking` (Claude re-reads)
  *   4 Categorizing & saving  — `categorizing`, `saving`
@@ -32,6 +32,7 @@ export const initialUploadProgress: UploadProgressState = {
 }
 
 const STAGE_STEP = new Map<string, number>([
+  ['queued', 1],
   ['preparing', 1],
   ['reading', 2],
   ['rechecking', 3],
@@ -105,6 +106,8 @@ export function uploadStepViews(state: UploadProgressState): UploadStepView[] {
  */
 export function describeUploadEvent(event: UploadProgressEvent): string | null {
   switch (event.stage) {
+    case 'queued':
+      return 'Waiting to start'
     case 'preparing':
       return 'Preparing image'
     case 'reading': {

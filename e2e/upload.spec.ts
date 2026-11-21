@@ -25,22 +25,6 @@ function processingResult(id: number) {
   }
 }
 
-/** Server-sent events body, as the backend writes it: one `data:` line per event. */
-const sse = (events: unknown[]) => events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')
-
-/** A full progress stream ending with the processing result. */
-function uploadStreamBody(id: number) {
-  return sse([
-    { type: 'progress', stage: 'preparing' },
-    { type: 'progress', stage: 'reading', method: 'ai' },
-    { type: 'progress', stage: 'reading', method: 'ai', items: 2 },
-    { type: 'progress', stage: 'checking' },
-    { type: 'progress', stage: 'categorizing' },
-    { type: 'progress', stage: 'saving' },
-    { type: 'result', data: processingResult(id) },
-  ])
-}
-
 /**
  * Block the vendored OpenCV/jscanify scripts so the client scanner fails fast
  * and the flow falls back to uploading the original image — deterministic in
@@ -54,62 +38,105 @@ async function mockScanner(page: Page) {
   )
 }
 
-/** Mock the streaming upload endpoint (distinct receipt per call). */
-async function mockUploadFlow(page: Page) {
-  let nextId = 1001
-  await mockScanner(page)
-  await page.route('**/api/receipts/upload-stream', route =>
-    route.fulfill({ contentType: 'text/event-stream', body: uploadStreamBody(nextId++) }),
-  )
+// ── Fake server ──────────────────────────────────────────────────────────────
+// Uploads are accepted first (POST /enqueue → receipt id) and processed in the
+// background; the UI follows them by polling GET /status?ids=…. This fake
+// keeps each receipt's state in the test process so a test can drive it.
+
+type Progress = { stage: string; method?: string; items?: number; problems?: number }
+type FakeState =
+  | { status: 'processing'; progress: Progress }
+  | { status: 'failed'; error: string }
+  | { status: 'pending'; result: ReturnType<typeof processingResult> | null }
+
+interface FakeServer {
+  /** Receipt ids accepted so far, in order. */
+  enqueued: number[]
+  /** Receipt ids sent for another attempt. */
+  reprocessed: number[]
+  deleted: number[]
+  progress(id: number, progress: Progress): void
+  finish(id: number): void
+  fail(id: number, error: string): void
 }
 
 /**
- * Playwright's route.fulfill delivers a body all at once, so to observe live
- * progress we replace fetch for the upload-stream URL with a ReadableStream the
- * test pushes NDJSON lines into via `pushUploadLine`.
+ * Mock the upload endpoints. With `autoFinish` (default) every receipt is ready
+ * on the first poll; otherwise it stays "queued" until the test moves it on.
  */
-// Shape of the page globals the controllable stream shim uses. (The e2e
-// tsconfig has no DOM lib, so this goes through globalThis.)
-type StreamGlobals = {
-  __uploadStream?: ReadableStreamDefaultController<Uint8Array>
-  fetch: typeof fetch
-}
-
-async function mockControllableUploadStream(page: Page) {
+async function mockServer(page: Page, { autoFinish = true, firstId = 1001 } = {}): Promise<FakeServer> {
   await mockScanner(page)
-  await page.addInitScript(() => {
-    const g = globalThis as unknown as StreamGlobals
-    const realFetch = g.fetch.bind(g)
-    g.fetch = (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (url.includes('/api/receipts/upload-stream')) {
-        const body = new ReadableStream<Uint8Array>({ start(c) { g.__uploadStream = c } })
-        return Promise.resolve(new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }))
-      }
-      return realFetch(input, init)
-    }
+  const states = new Map<number, FakeState>()
+  let nextId = firstId
+  const server: FakeServer = {
+    enqueued: [],
+    reprocessed: [],
+    deleted: [],
+    progress: (id, progress) => { states.set(id, { status: 'processing', progress }) },
+    finish: id => { states.set(id, { status: 'pending', result: processingResult(id) }) },
+    fail: (id, error) => { states.set(id, { status: 'failed', error }) },
+  }
+
+  await page.route('**/api/receipts/enqueue', route => {
+    const id = nextId++
+    server.enqueued.push(id)
+    if (autoFinish) server.finish(id)
+    else server.progress(id, { stage: 'queued' })
+    return route.fulfill({ status: 202, json: { receipt_id: id, status: 'processing' } })
   })
+
+  await page.route('**/api/receipts/status?*', route => {
+    const ids = (new URL(route.request().url()).searchParams.get('ids') ?? '').split(',').map(Number)
+    const body = ids.filter(id => states.has(id)).map(id => {
+      const st = states.get(id)!
+      return {
+        id,
+        status: st.status,
+        progress: st.status === 'processing' ? st.progress : null,
+        error: st.status === 'failed' ? st.error : null,
+        result: st.status === 'pending' ? st.result : null,
+      }
+    })
+    return route.fulfill({ json: body })
+  })
+
+  await page.route(/\/api\/receipts\/\d+\/reprocess$/, route => {
+    const id = Number(route.request().url().match(/\/receipts\/(\d+)\/reprocess$/)![1])
+    server.reprocessed.push(id)
+    server.progress(id, { stage: 'queued' })
+    return route.fulfill({ status: 202, json: { receipt_id: id, status: 'processing' } })
+  })
+
+  await page.route(/\/api\/receipts\/\d+$/, route => {
+    if (route.request().method() !== 'DELETE') return route.fallback()
+    const id = Number(route.request().url().match(/\/receipts\/(\d+)$/)![1])
+    server.deleted.push(id)
+    states.delete(id)
+    return route.fulfill({ status: 204 })
+  })
+
+  return server
 }
 
-async function pushUploadLine(page: Page, event: unknown, close = false) {
-  await page.waitForFunction(() => !!(globalThis as unknown as StreamGlobals).__uploadStream)
-  await page.evaluate(([line, end]) => {
-    const c = (globalThis as unknown as StreamGlobals).__uploadStream!
-    c.enqueue(new TextEncoder().encode(line))
-    if (end) c.close()
-  }, [`data: ${JSON.stringify(event)}\n\n`, close] as const)
+async function pickFiles(page: Page, names: string[]) {
+  await page.goto('/')
+  // "Scan Receipt" matches both the sidebar button and the topbar action.
+  await page.getByRole('button', { name: 'Scan Receipt' }).first().click()
+  await page.locator('input[type="file"][multiple]').setInputFiles(
+    names.map(name => name.endsWith('.pdf')
+      ? { name, mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') }
+      : { name, mimeType: 'image/png', buffer: PNG }),
+  )
+  await page.getByRole('button', { name: new RegExp(`Process ${names.length} receipt`) }).click()
 }
 
 /** Open the modal, queue one image and skip the crop step to start uploading. */
 async function startSingleUpload(page: Page) {
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Scan Receipt' }).first().click()
-  await page.locator('input[type="file"][multiple]').setInputFiles([
-    { name: 'only.png', mimeType: 'image/png', buffer: PNG },
-  ])
-  await page.getByRole('button', { name: /Process 1 receipt/ }).click()
+  await pickFiles(page, ['only.png'])
   await page.getByRole('button', { name: /Skip — Use Full Image/ }).click()
 }
+
+const approve = (page: Page) => page.getByRole('button', { name: 'Approve', exact: true }).first()
 
 test.describe('Upload flow', () => {
   // eslint-disable-next-line no-empty-pattern -- Playwright requires a destructured fixtures arg
@@ -118,20 +145,8 @@ test.describe('Upload flow', () => {
   })
 
   test('multi-upload processes a batch and Approve advances through the queue', async ({ page }) => {
-    await mockUploadFlow(page)
-    await page.goto('/')
-
-    // "Scan Receipt" matches both the sidebar button and the topbar action.
-    await page.getByRole('button', { name: 'Scan Receipt' }).first().click()
-
-    // Queue two images.
-    await page.locator('input[type="file"][multiple]').setInputFiles([
-      { name: 'a.png', mimeType: 'image/png', buffer: PNG },
-      { name: 'b.png', mimeType: 'image/png', buffer: PNG },
-    ])
-
-    await expect(page.getByRole('button', { name: /Process 2 receipts/ })).toBeVisible()
-    await page.getByRole('button', { name: /Process 2 receipts/ }).click()
+    const server = await mockServer(page)
+    await pickFiles(page, ['a.png', 'b.png'])
 
     // Each receipt steps through the crop modal (auto-detected corners pre-filled).
     await expect(page.getByText('Crop Receipt')).toBeVisible()
@@ -140,95 +155,198 @@ test.describe('Upload flow', () => {
 
     // Review opens on the first with an "n of m" indicator.
     await expect(page.getByText(/1 of 2/)).toBeVisible()
+    expect(server.enqueued).toEqual([1001, 1002])
 
     // Approve advances to the next in the queue (footer button, exact match to
     // avoid the topbar "Approve & Next").
-    const approve = () => page.getByRole('button', { name: 'Approve', exact: true }).first()
-    await approve().click()
+    await approve(page).click()
     await expect(page.getByText(/2 of 2/)).toBeVisible()
 
     // Final approve returns to the receipts list.
-    await approve().click()
+    await approve(page).click()
     await expect(page).toHaveURL(/\/receipts$/)
   })
 
+  test('each receipt is uploaded as soon as its crop is confirmed', async ({ page }) => {
+    const server = await mockServer(page, { autoFinish: false })
+    await pickFiles(page, ['a.png', 'doc.pdf', 'b.png'])
+
+    // The PDF needs no crop, so it is already on its way while the first photo is cropped.
+    await expect(page.getByText('Crop Receipt')).toBeVisible()
+    await expect.poll(() => server.enqueued.length).toBe(1)
+
+    await page.getByRole('button', { name: /Apply Crop/ }).click()
+    // First photo sent; the second is still waiting in the crop step.
+    await expect.poll(() => server.enqueued.length).toBe(2)
+    await expect(page.getByText('Crop Receipt')).toBeVisible()
+
+    await page.getByRole('button', { name: /Apply Crop/ }).click()
+    await expect.poll(() => server.enqueued.length).toBe(3)
+
+    // All three are listed with their own state.
+    const rows = page.getByTestId('upload-row')
+    await expect(rows).toHaveCount(3)
+    await expect(page.getByText('Processing receipts… 0 of 3 ready')).toBeVisible()
+    await expect(rows.filter({ hasText: 'Waiting to start' })).toHaveCount(3)
+
+    server.progress(1002, { stage: 'reading', method: 'ai', items: 4 })
+    await expect(rows.filter({ hasText: 'Reading receipt with AI · 4 items found' })).toHaveCount(1)
+
+    server.finish(1001)
+    await expect(page.getByText('Processing receipts… 1 of 3 ready')).toBeVisible()
+    await expect(rows.filter({ hasText: 'Ready to review' })).toHaveCount(1)
+
+    // Once the rest finish, review starts on its own.
+    server.finish(1002)
+    server.finish(1003)
+    await expect(page.getByText(/1 of 3/)).toBeVisible()
+  })
+
   test('single upload goes through the crop step and opens review', async ({ page }) => {
-    await mockUploadFlow(page)
-    await page.goto('/')
-
-    await page.getByRole('button', { name: 'Scan Receipt' }).first().click()
-
-    await page.locator('input[type="file"][multiple]').setInputFiles([
-      { name: 'only.png', mimeType: 'image/png', buffer: PNG },
-    ])
-
-    await page.getByRole('button', { name: /Process 1 receipt/ }).click()
-
-    // Single image → crop modal; skipping uploads the full image.
-    await page.getByRole('button', { name: /Skip — Use Full Image/ }).click()
+    await mockServer(page)
+    await startSingleUpload(page)
 
     // Lands on review with no batch indicator.
-    await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
+    await expect(approve(page)).toBeVisible()
     await expect(page.getByText(/\d+ of \d+/)).toHaveCount(0)
   })
 
-  test('single upload shows real progress streamed from the server', async ({ page }) => {
-    await mockControllableUploadStream(page)
+  test('single upload shows the real processing stage', async ({ page }) => {
+    test.setTimeout(30_000)   // several one-second polls
+    const server = await mockServer(page, { autoFinish: false, firstId: 2001 })
     await startSingleUpload(page)
 
-    const steps = page.getByTestId('processing-steps')
-    const active = steps.locator('[aria-current="step"]')
+    const active = page.getByTestId('processing-steps').locator('[aria-current="step"]')
 
-    // Nothing streamed yet: still uploading.
-    await expect(active).toContainText('Uploading image')
-
-    await pushUploadLine(page, { type: 'progress', stage: 'preparing' })
+    // Accepted and waiting for a worker: past "Uploading image".
     await expect(active).toContainText('Preparing image')
 
-    await pushUploadLine(page, { type: 'progress', stage: 'reading', method: 'ai' })
+    server.progress(2001, { stage: 'reading', method: 'ai' })
     await expect(active).toContainText('Reading receipt with AI')
 
-    await pushUploadLine(page, { type: 'progress', stage: 'reading', method: 'ai', items: 23 })
+    server.progress(2001, { stage: 'reading', method: 'ai', items: 23 })
     await expect(active).toContainText('23 items found')
 
-    await pushUploadLine(page, { type: 'progress', stage: 'rechecking', problems: 1 })
+    server.progress(2001, { stage: 'rechecking', problems: 1, items: 23 })
     await expect(active).toContainText('Double-checking totals…')
 
     // Unknown stages are ignored.
-    await pushUploadLine(page, { type: 'progress', stage: 'warp-drive' })
+    server.progress(2001, { stage: 'warp-drive' })
+    await page.waitForTimeout(1500)
     await expect(active).toContainText('Double-checking totals…')
 
-    await pushUploadLine(page, { type: 'progress', stage: 'categorizing' })
+    server.progress(2001, { stage: 'categorizing' })
     await expect(active).toContainText('Categorizing & saving')
 
-    await pushUploadLine(page, { type: 'result', data: processingResult(2001) }, true)
-    await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
+    server.finish(2001)
+    await expect(approve(page)).toBeVisible()
   })
 
   test('single upload labels the OCR fallback', async ({ page }) => {
-    await mockControllableUploadStream(page)
+    const server = await mockServer(page, { autoFinish: false })
     await startSingleUpload(page)
 
-    await pushUploadLine(page, { type: 'progress', stage: 'preparing' })
-    await pushUploadLine(page, { type: 'progress', stage: 'reading', method: 'ocr' })
+    server.progress(1001, { stage: 'reading', method: 'ocr' })
     await expect(page.getByTestId('processing-steps').locator('[aria-current="step"]'))
       .toContainText('Reading receipt (OCR)')
   })
 
-  test('a streamed error event shows the message and returns to the picker', async ({ page }) => {
-    await mockScanner(page)
-    await page.route('**/api/receipts/upload-stream', route =>
-      route.fulfill({
-        contentType: 'text/event-stream',
-        body: sse([
-          { type: 'progress', stage: 'preparing' },
-          { type: 'error', status: 422, detail: 'Could not read receipt' },
-        ]),
-      }),
-    )
+  test('an upload can be left to finish in the background', async ({ page }) => {
+    const server = await mockServer(page, { autoFinish: false })
+    // Once accepted, the receipt is in the list as "processing".
+    await page.route('**/api/receipts', route => {
+      if (route.request().method() !== 'GET') return route.fallback()
+      return route.fulfill({
+        json: server.enqueued.map(id => ({
+          id, store_name: 'Unknown Store', receipt_date: null, scanned_at: '2026-02-21T10:00:00Z',
+          status: 'processing', total: null, item_count: 0, total_verified: false,
+        })),
+      })
+    })
     await startSingleUpload(page)
 
-    await expect(page.getByText('Upload failed: Could not read receipt')).toBeVisible()
+    await expect(page.getByText(/You can close this window/)).toBeVisible()
+    await page.getByRole('button', { name: 'Continue in background' }).click()
+    await expect(page.getByTestId('upload-status')).toHaveCount(0)
+
+    await page.goto('/receipts')
+    const row = page.getByRole('row').filter({ hasText: 'New receipt' })
+    await expect(row).toBeVisible()
+    await expect(row.getByText('Processing…').last()).toBeVisible()
+  })
+
+  test('a receipt that cannot be read shows why, and can be retried', async ({ page }) => {
+    const server = await mockServer(page, { autoFinish: false })
+    await startSingleUpload(page)
+    server.fail(1001, 'Could not read receipt')
+
+    await expect(page.getByText('Could not read receipt')).toBeVisible()
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await expect(page.getByTestId('processing-steps')).toBeVisible()
+    expect(server.reprocessed).toEqual([1001])
+
+    server.finish(1001)
+    await expect(approve(page)).toBeVisible()
+  })
+
+  test('discarding a failed receipt deletes it and returns to the picker', async ({ page }) => {
+    const server = await mockServer(page, { autoFinish: false })
+    await startSingleUpload(page)
+    server.fail(1001, 'Could not read receipt')
+
+    await page.getByRole('button', { name: 'Discard' }).click()
     await expect(page.getByRole('button', { name: /Process 1 receipt/ })).toBeVisible()
+    expect(server.deleted).toEqual([1001])
+  })
+
+  test('a batch with a failure waits for the user instead of dropping it silently', async ({ page }) => {
+    const server = await mockServer(page, { autoFinish: false })
+    await pickFiles(page, ['a.png', 'b.png'])
+    await page.getByRole('button', { name: /Apply Crop/ }).click()
+    await page.getByRole('button', { name: /Apply Crop/ }).click()
+    await expect(page.getByTestId('upload-row')).toHaveCount(2)
+
+    server.finish(1001)
+    server.fail(1002, 'Failed to process PDF: bad xref')
+
+    await expect(page.getByText('1 of 2 receipts ready')).toBeVisible()
+    await expect(page.getByText('Failed to process PDF: bad xref')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Retry b.png' })).toBeVisible()
+
+    // The good one can still be reviewed.
+    await page.getByRole('button', { name: 'Review 1 receipt' }).click()
+    await expect(approve(page)).toBeVisible()
+    await expect(page.getByText(/\d+ of \d+/)).toHaveCount(0)
+  })
+
+  test('an upload that never reaches the server can be retried', async ({ page }) => {
+    const server = await mockServer(page)
+    let attempts = 0
+    await page.route('**/api/receipts/enqueue', route => {
+      attempts++
+      if (attempts === 1) return route.fulfill({ status: 413, json: { detail: 'File too large (max 20 MB)' } })
+      return route.fallback()
+    })
+    await startSingleUpload(page)
+
+    await expect(page.getByText('Upload failed: File too large (max 20 MB)')).toBeVisible()
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await expect(approve(page)).toBeVisible()
+    expect(server.enqueued).toEqual([1001])
+  })
+
+  test('cancelling the crop walkthrough keeps what was already uploaded', async ({ page }) => {
+    const server = await mockServer(page, { autoFinish: false })
+    await pickFiles(page, ['a.png', 'b.png', 'c.png'])
+    await page.getByRole('button', { name: /Apply Crop/ }).click()
+    await expect.poll(() => server.enqueued.length).toBe(1)
+
+    await page.getByRole('button').filter({ has: page.locator('svg.lucide-x') }).click()
+
+    // The one that was sent carries on; the rest are reported, not silently lost.
+    await expect(page.getByTestId('processing-steps')).toBeVisible()
+    await expect(page.getByText('2 photos were not uploaded because cropping was cancelled.')).toBeVisible()
+    server.finish(1001)
+    await expect(approve(page)).toBeVisible()
   })
 })

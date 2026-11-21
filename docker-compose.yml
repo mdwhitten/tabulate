@@ -19,6 +19,7 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-haiku-5-5}
       - CLAUDE_EFFORT=${CLAUDE_EFFORT:-low}
       - STORED_IMAGE_MAX_WIDTH=${STORED_IMAGE_MAX_WIDTH:-1200}
+      - PROCESSING_CONCURRENCY=${PROCESSING_CONCURRENCY:-2}
     volumes:
       - tabulate-data:/data
       - ./backend:/app             # live reload during development

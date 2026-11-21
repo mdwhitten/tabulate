@@ -18,12 +18,20 @@ export interface LineItem {
   receipt_id: number
 }
 
+/**
+ * processing — upload accepted, still being read in the background
+ * failed     — processing failed (see `processing_error`); can be retried
+ * pending    — read, awaiting the user's review
+ * verified   — approved
+ */
+export type ReceiptStatus = 'processing' | 'failed' | 'pending' | 'review' | 'verified'
+
 export interface Receipt {
   id: number
   store_name: string | null
   receipt_date: string | null
   scanned_at: string
-  status: 'pending' | 'review' | 'verified'
+  status: ReceiptStatus
   total: number | null
   tax: number | null
   total_verified: boolean
@@ -33,6 +41,8 @@ export interface Receipt {
   thumbnail_path: string | null
   ynab_sync_status?: string | null
   ynab_transaction_id?: string | null
+  /** Why processing failed, when `status` is 'failed'. */
+  processing_error?: string | null
   items: LineItem[]
 }
 
@@ -41,7 +51,7 @@ export interface ReceiptSummary {
   store_name: string | null
   receipt_date: string | null
   scanned_at: string
-  status: 'pending' | 'review' | 'verified'
+  status: ReceiptStatus
   total: number | null
   item_count: number
   ynab_sync_status?: string | null

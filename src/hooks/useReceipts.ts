@@ -2,12 +2,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listReceipts,
   getReceipt,
-  uploadReceipt,
+  reprocessReceipt,
   saveReceipt,
   deleteReceipt,
   recategorizeReceipt,
 } from '../api/receipts'
-import type { CropCorners, RecategorizeResult, UploadProgressEvent } from '../api/receipts'
+import type { RecategorizeResult } from '../api/receipts'
 import type { SaveReceiptBody } from '../types'
 
 export const receiptKeys = {
@@ -16,10 +16,17 @@ export const receiptKeys = {
   detail: (id: number) => ['receipts', id] as const,
 }
 
+/** How often to re-check while a receipt is still being processed. */
+export const PROCESSING_POLL_MS = 2500
+
 export function useReceiptList() {
   return useQuery({
     queryKey: receiptKeys.list(),
     queryFn:  listReceipts,
+    // Receipts uploaded in the background finish on their own: keep the list
+    // fresh until none is left processing.
+    refetchInterval: q =>
+      q.state.data?.some(r => r.status === 'processing') ? PROCESSING_POLL_MS : false,
   })
 }
 
@@ -28,18 +35,17 @@ export function useReceipt(id: number | null) {
     queryKey: receiptKeys.detail(id!),
     queryFn:  () => getReceipt(id!),
     enabled:  id != null,
+    refetchInterval: q => (q.state.data?.status === 'processing' ? PROCESSING_POLL_MS : false),
   })
 }
 
-export function useUploadReceipt() {
+/** Retry a receipt whose processing failed. */
+export function useReprocessReceipt() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, cropCorners, onProgress }: {
-      file: File | Blob
-      cropCorners?: CropCorners | null
-      onProgress?: (event: UploadProgressEvent) => void
-    }) => uploadReceipt(file, cropCorners, null, onProgress),
-    onSuccess: () => {
+    mutationFn: (id: number) => reprocessReceipt(id),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: receiptKeys.detail(id) })
       qc.invalidateQueries({ queryKey: receiptKeys.list() })
     },
   })
