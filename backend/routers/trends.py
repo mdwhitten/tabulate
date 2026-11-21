@@ -184,7 +184,9 @@ async def dashboard_summary(db: aiosqlite.Connection = Depends(get_db)):
         row = await cur.fetchone()
 
     # All-time total scanned (any status) — this is what "Receipts Scanned" should show
-    async with db.execute("SELECT COUNT(*) as cnt FROM receipts") as cur:
+    async with db.execute(
+        "SELECT COUNT(*) as cnt FROM receipts WHERE COALESCE(status, 'pending') NOT IN ('processing', 'failed')"
+    ) as cur:
         scanned_row = await cur.fetchone()
 
     async with db.execute("SELECT COUNT(*) as cnt FROM item_mappings") as cur:

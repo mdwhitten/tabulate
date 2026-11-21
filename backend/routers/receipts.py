@@ -1,7 +1,10 @@
 """
 Receipts Router
 
-POST /api/receipts/upload     — upload image, extract + categorize (JSON result)
+POST /api/receipts/enqueue    — accept an upload, process it in the background (202)
+GET  /api/receipts/status     — processing state / progress of enqueued receipts
+POST /api/receipts/{id}/reprocess — retry a receipt whose processing failed
+POST /api/receipts/upload     — upload and wait for the result (JSON)
 POST /api/receipts/upload-stream — same, streaming progress as server-sent events
 GET  /api/receipts            — list all receipts (summary)
 GET  /api/receipts/{id}       — get receipt with line items
@@ -15,7 +18,7 @@ import os
 import uuid
 import shutil
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Optional
 
 import aiosqlite
 from fastapi import APIRouter, File, UploadFile, Depends, HTTPException, Form, Request
@@ -23,11 +26,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from db.database import get_db
-from models.schemas import ReceiptSummary, Receipt, ProcessingResult, LineItem
+from models.schemas import (
+    ReceiptSummary, Receipt, ProcessingResult, LineItem,
+    EnqueuedReceipt, ReceiptProcessingStatus,
+)
 from services.ocr_service import extract_text_from_image, parse_receipt_text, verify_total
 from services.receipt_ai import extract_receipt_with_ai
 from services.categorize_service import categorize_items, get_categories, apply_manual_correction, persist_approved_mappings
 from services.image_service import generate_thumbnail, detect_receipt_edges, downscale_for_storage
+from services.receipt_jobs import ProgressFn, jobs
 
 logger = logging.getLogger("tabulate.receipts")
 router = APIRouter()
@@ -86,6 +93,16 @@ async def diagnose():
 
 
 # ── Upload & Process ──────────────────────────────────────────────────────────
+#
+# An upload is *accepted* first — the raw bytes are written to disk and a
+# receipt row is inserted with status 'processing' — and only then processed,
+# by a background job (services.receipt_jobs) that is not tied to the HTTP
+# request. So a client that disconnects or navigates away loses nothing, a
+# batch is processed with bounded parallelism, and a server restart resumes
+# whatever was still in flight (see resume_processing).
+#
+#   processing ──► pending   (extracted; awaiting the user's review)
+#        └───────► failed    (processing_error says why; POST /{id}/reprocess retries)
 
 _ALLOWED_CONTENT_TYPES = {
     "image/jpeg", "image/png", "image/webp", "image/tiff",
@@ -93,15 +110,45 @@ _ALLOWED_CONTENT_TYPES = {
 }
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024   # matches nginx client_max_body_size
 
-ProgressFn = Callable[..., None]
+# A job that keeps getting interrupted (e.g. it crashes the process) must not
+# be resumed forever on every restart.
+MAX_PROCESSING_ATTEMPTS = 3
 
-# Strong references to in-flight /upload-stream workers: the event loop only
-# keeps weak references to tasks, so an unreferenced task can be collected.
-_stream_tasks: set[asyncio.Task] = set()
+_STILL_PROCESSING = "Receipt is still being processed"
+_NOT_PROCESSED = "Receipt could not be processed — retry or delete it"
 
 
 def _no_progress(stage: str, **detail) -> None:
     pass
+
+
+def _remove_files(*paths: Optional[str]) -> None:
+    """Best-effort delete."""
+    for p in paths:
+        try:
+            if p and os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+
+
+def _job_files(processing_job: Optional[str]) -> list[str]:
+    """Raw upload files referenced by a receipt's processing_job JSON."""
+    if not processing_job:
+        return []
+    try:
+        job = json.loads(processing_job)
+    except (TypeError, ValueError):
+        return []
+    return [p for p in (job.get("source"), job.get("original")) if p]
+
+
+def _ensure_processed(status: Optional[str]) -> None:
+    """Reject edits to a receipt that has no extracted data (yet)."""
+    if status == "processing":
+        raise HTTPException(status_code=409, detail=_STILL_PROCESSING)
+    if status == "failed":
+        raise HTTPException(status_code=409, detail=_NOT_PROCESSED)
 
 
 async def _read_upload(
@@ -119,6 +166,70 @@ async def _read_upload(
         if 0 < len(data) <= _MAX_UPLOAD_BYTES:
             orig_bytes = data
     return contents, file.content_type, orig_bytes
+
+
+def _write_sources(contents: bytes, orig_bytes: Optional[bytes]) -> tuple[str, Optional[str]]:
+    """Persist the raw upload (and pristine original) byte-for-byte, so
+    processing can run — or be re-run — later from disk at full resolution."""
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+    source = os.path.join(IMAGE_DIR, f"upload_{uuid.uuid4()}.bin")
+    with open(source, "wb") as f:
+        f.write(contents)
+    original = None
+    if orig_bytes:
+        original = os.path.join(IMAGE_DIR, f"upload_{uuid.uuid4()}.bin")
+        try:
+            with open(original, "wb") as f:
+                f.write(orig_bytes)
+        except Exception:
+            _remove_files(source, original)
+            raise
+    return source, original
+
+
+def _read_sources(job: dict) -> tuple[bytes, Optional[bytes]]:
+    with open(job["source"], "rb") as f:
+        contents = f.read()
+    orig_bytes = None
+    if job.get("original"):
+        try:
+            with open(job["original"], "rb") as f:
+                orig_bytes = f.read()
+        except OSError as e:
+            logger.warning("Original upload unreadable, continuing without it: %s", e)
+    return contents, orig_bytes
+
+
+async def _accept_upload(
+    *,
+    contents: bytes,
+    content_type: Optional[str],
+    orig_bytes: Optional[bytes],
+    store_name_hint: Optional[str],
+    crop_corners: Optional[str],
+    db: aiosqlite.Connection,
+) -> int:
+    """Make an upload durable: bytes on disk + a 'processing' receipt row.
+    Returns the new receipt id. Fast — no image decoding, no AI."""
+    source, original = await asyncio.to_thread(_write_sources, contents, orig_bytes)
+    job = {
+        "source": source,
+        "original": original,
+        "content_type": content_type,
+        "store_name_hint": store_name_hint,
+        "crop_corners": crop_corners,
+        "attempts": 0,
+    }
+    try:
+        cursor = await db.execute(
+            "INSERT INTO receipts (store_name, status, processing_job) VALUES (?, 'processing', ?)",
+            ((store_name_hint or "").strip(), json.dumps(job)),
+        )
+        await db.commit()
+    except BaseException:
+        _remove_files(source, original)
+        raise
+    return cursor.lastrowid
 
 
 def _prepare_image(
@@ -251,8 +362,25 @@ def _store_images(contents: bytes, orig_bytes: Optional[bytes]) -> tuple[str, Op
     return image_path, thumbnail_path, original_path
 
 
-async def _process_upload(
+async def _store_images_cancellable(
+    contents: bytes, orig_bytes: Optional[bytes]
+) -> tuple[str, Optional[str], Optional[str]]:
+    """_store_images in a worker thread. A thread can't be interrupted, so if
+    we're cancelled while it runs, delete whatever it ends up writing."""
+    fut = asyncio.ensure_future(asyncio.to_thread(_store_images, contents, orig_bytes))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        def _discard(done: asyncio.Future) -> None:
+            if not done.cancelled() and done.exception() is None:
+                _remove_files(*done.result())
+        fut.add_done_callback(_discard)
+        raise
+
+
+async def _run_pipeline(
     *,
+    receipt_id: int,
     contents: bytes,
     content_type: Optional[str],
     orig_bytes: Optional[bytes],
@@ -261,8 +389,13 @@ async def _process_upload(
     db: aiosqlite.Connection,
     progress: ProgressFn = _no_progress,
 ) -> ProcessingResult:
-    """Run the full upload pipeline. `progress(stage, **detail)` is called as
-    each real stage starts: preparing → reading → checking → categorizing → saving."""
+    """Extract an accepted upload and fill in its receipt row.
+
+    `progress(stage, **detail)` is called as each real stage starts:
+    preparing → reading → checking → categorizing → saving. Nothing is written
+    to the DB until the very end, and then in one transaction, so a receipt is
+    never visible half-extracted.
+    """
     progress("preparing")
     contents, pdf_text = await asyncio.to_thread(_prepare_image, contents, content_type, crop_corners)
 
@@ -300,23 +433,6 @@ async def _process_upload(
     progress("checking")
     verified, verify_msg = verify_total(parsed)
 
-    image_path, thumbnail_path, original_path = await asyncio.to_thread(
-        _store_images, contents, orig_bytes
-    )
-
-    # Persist receipt (status = 'pending' until user saves)
-    cursor = await db.execute(
-        """INSERT INTO receipts
-           (store_name, receipt_date, image_path, original_path, thumbnail_path, ocr_raw,
-            subtotal, tax, discounts, total, total_verified, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
-        (store, parsed.receipt_date, image_path, original_path, thumbnail_path, ocr_text,
-         parsed.subtotal, parsed.tax, parsed.discounts, parsed.total,
-         1 if verified else 0),
-    )
-    receipt_id = cursor.lastrowid
-    await db.commit()
-
     # Categorize: learned mappings first, then the category Claude assigned
     # while reading, then one batched Claude call for anything left.
     progress("categorizing")
@@ -329,29 +445,54 @@ async def _process_upload(
     categorized, categorization_failed = await categorize_items(raw_items, store, db)
 
     progress("saving")
+    image_path, thumbnail_path, original_path = await _store_images_cancellable(contents, orig_bytes)
+
     line_items = []
-    for item in categorized:
-        cur2 = await db.execute(
-            """INSERT INTO line_items
-               (receipt_id, raw_name, clean_name, price, quantity,
-                category, category_source, ai_confidence)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (receipt_id, item["raw_name"], item.get("clean_name"), item["price"], item.get("quantity", 1),
-             item["category"], item["category_source"], item.get("ai_confidence")),
+    try:
+        cursor = await db.execute(
+            """UPDATE receipts
+               SET store_name = ?, receipt_date = ?, image_path = ?, original_path = ?,
+                   thumbnail_path = ?, ocr_raw = ?, subtotal = ?, tax = ?, discounts = ?,
+                   total = ?, total_verified = ?,
+                   status = 'pending', processing_job = NULL, processing_error = NULL
+               WHERE id = ? AND status = 'processing'""",
+            (store, parsed.receipt_date, image_path, original_path, thumbnail_path, ocr_text,
+             parsed.subtotal, parsed.tax, parsed.discounts, parsed.total,
+             1 if verified else 0, receipt_id),
         )
-        line_items.append(LineItem(
-            id=cur2.lastrowid,
-            receipt_id=receipt_id,
-            raw_name=item["raw_name"],
-            clean_name=item.get("clean_name"),
-            price=item["price"],
-            quantity=item.get("quantity", 1),
-            category=item["category"],
-            category_source=item["category_source"],
-            ai_confidence=item.get("ai_confidence"),
-            corrected=False,
-        ))
-    await db.commit()
+        if cursor.rowcount != 1:
+            # Deleted (or otherwise taken out of 'processing') while we worked.
+            raise HTTPException(status_code=409, detail="Receipt is no longer awaiting processing")
+        await db.execute("DELETE FROM line_items WHERE receipt_id = ?", (receipt_id,))
+        for item in categorized:
+            cur2 = await db.execute(
+                """INSERT INTO line_items
+                   (receipt_id, raw_name, clean_name, price, quantity,
+                    category, category_source, ai_confidence)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (receipt_id, item["raw_name"], item.get("clean_name"), item["price"], item.get("quantity", 1),
+                 item["category"], item["category_source"], item.get("ai_confidence")),
+            )
+            line_items.append(LineItem(
+                id=cur2.lastrowid,
+                receipt_id=receipt_id,
+                raw_name=item["raw_name"],
+                clean_name=item.get("clean_name"),
+                price=item["price"],
+                quantity=item.get("quantity", 1),
+                category=item["category"],
+                category_source=item["category_source"],
+                ai_confidence=item.get("ai_confidence"),
+                corrected=False,
+            ))
+        await db.commit()
+    except BaseException:
+        try:
+            await db.rollback()
+        except BaseException:
+            pass
+        _remove_files(image_path, thumbnail_path, original_path)
+        raise
 
     return ProcessingResult(
         receipt_id=receipt_id,
@@ -370,8 +511,125 @@ async def _process_upload(
     )
 
 
+async def _mark_failed(db: aiosqlite.Connection, receipt_id: int, detail: str) -> None:
+    await db.execute(
+        "UPDATE receipts SET status = 'failed', processing_error = ? WHERE id = ? AND status = 'processing'",
+        (detail, receipt_id),
+    )
+    await db.commit()
+
+
+async def _process_receipt(receipt_id: int, db_factory, progress: ProgressFn) -> dict:
+    """Background job body: process one accepted receipt on its own DB
+    connection. Returns the terminal event; failures are recorded on the row
+    (status 'failed') rather than raised. Cancellation leaves the row
+    'processing' so it is resumed on the next start."""
+    db_gen = db_factory()
+    try:
+        db = await db_gen.__anext__()
+        async with db.execute(
+            "SELECT status, processing_job FROM receipts WHERE id = ?", (receipt_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row or row["status"] != "processing" or not row["processing_job"]:
+            return {"type": "error", "status": 404, "detail": "Receipt is not awaiting processing"}
+
+        job = json.loads(row["processing_job"])
+        attempts = int(job.get("attempts") or 0) + 1
+        if attempts > MAX_PROCESSING_ATTEMPTS:
+            detail = f"Processing was interrupted {MAX_PROCESSING_ATTEMPTS} times"
+            await _mark_failed(db, receipt_id, detail)
+            return {"type": "error", "status": 500, "detail": detail}
+        job["attempts"] = attempts
+        await db.execute(
+            "UPDATE receipts SET processing_job = ? WHERE id = ?", (json.dumps(job), receipt_id)
+        )
+        await db.commit()
+
+        try:
+            try:
+                contents, orig_bytes = await asyncio.to_thread(_read_sources, job)
+            except OSError:
+                raise HTTPException(status_code=500, detail="The uploaded file is no longer on the server")
+            result = await _run_pipeline(
+                receipt_id=receipt_id, contents=contents, content_type=job.get("content_type"),
+                orig_bytes=orig_bytes, store_name_hint=job.get("store_name_hint"),
+                crop_corners=job.get("crop_corners"), db=db, progress=progress,
+            )
+        except HTTPException as e:
+            status, detail = e.status_code, str(e.detail)
+        except Exception:
+            logger.exception("Receipt %s: processing failed", receipt_id)
+            status, detail = 500, "Receipt processing failed"
+        else:
+            # Stored copies exist now; the raw upload is no longer needed.
+            await asyncio.to_thread(_remove_files, job.get("source"), job.get("original"))
+            return {"type": "result", "data": result.model_dump(mode="json")}
+
+        await _mark_failed(db, receipt_id, detail)
+        return {"type": "error", "status": status, "detail": detail}
+    finally:
+        await db_gen.aclose()
+
+
+def _db_factory(request: Request):
+    """How background work opens DB connections (honouring test overrides)."""
+    return request.app.dependency_overrides.get(get_db, get_db)
+
+
+def _start_job(receipt_id: int, db_factory) -> None:
+    jobs.submit(receipt_id, lambda progress: _process_receipt(receipt_id, db_factory, progress))
+
+
+async def resume_processing(db_factory=get_db) -> int:
+    """Re-queue every receipt still marked 'processing' (called on startup, so
+    uploads accepted before a restart or crash are not lost). Returns how many."""
+    db_gen = db_factory()
+    try:
+        db = await db_gen.__anext__()
+        async with db.execute("SELECT id FROM receipts WHERE status = 'processing' ORDER BY id") as cur:
+            ids = [row["id"] for row in await cur.fetchall()]
+    finally:
+        await db_gen.aclose()
+    resumed = 0
+    for receipt_id in ids:
+        if not jobs.is_running(receipt_id):
+            _start_job(receipt_id, db_factory)
+            resumed += 1
+    if resumed:
+        logger.info("Resuming %d receipt(s) left in processing", resumed)
+    return resumed
+
+
+@router.post("/enqueue", response_model=EnqueuedReceipt, status_code=202)
+async def enqueue_receipt(
+    request: Request,
+    file: UploadFile = File(...),
+    store_name_hint: Optional[str] = Form(None),
+    crop_corners: Optional[str] = Form(None),   # JSON [[x,y],[x,y],[x,y],[x,y]] as 0–1 fractions
+    original: Optional[UploadFile] = File(None),  # pristine pre-crop image, when the client already perspective-corrected `file`
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Accept an upload and return immediately; processing continues in the
+    background whether or not the client stays connected.
+
+    The receipt exists from this point on with status 'processing' (it shows up
+    in GET /api/receipts). Poll GET /api/receipts/status?ids=… for progress; it
+    ends as 'pending' (ready for review) or 'failed'.
+    """
+    contents, content_type, orig_bytes = await _read_upload(file, original)
+    receipt_id = await _accept_upload(
+        contents=contents, content_type=content_type, orig_bytes=orig_bytes,
+        store_name_hint=store_name_hint, crop_corners=crop_corners, db=db,
+    )
+    _start_job(receipt_id, _db_factory(request))
+    return EnqueuedReceipt(receipt_id=receipt_id, status="processing")
+
+
 @router.post("/upload", response_model=ProcessingResult)
 async def upload_receipt(
+    request: Request,
     file: UploadFile = File(...),
     store_name_hint: Optional[str] = Form(None),
     crop_corners: Optional[str] = Form(None),   # JSON [[x,y],[x,y],[x,y],[x,y]] as 0–1 fractions
@@ -380,18 +638,29 @@ async def upload_receipt(
 ):
     """
     Accept an image upload, extract the receipt (Claude, with Tesseract as the
-    fallback), verify the total and categorize items.
+    fallback), verify the total and categorize items — and wait for the result.
     Returns a ProcessingResult for the review screen; the receipt is stored as 'pending'.
     If crop_corners is provided (4 [x,y] fraction pairs), the image is cropped first.
     When the client has already perspective-corrected the receipt, it sends the
     corrected image as `file` and the raw image as `original` so the crop can be
     redone later from the pristine source.
+
+    Same pipeline as /enqueue: if processing fails the receipt is kept with
+    status 'failed' (and this returns the error), and it keeps going if the
+    client gives up waiting.
     """
     contents, content_type, orig_bytes = await _read_upload(file, original)
-    return await _process_upload(
+    receipt_id = await _accept_upload(
         contents=contents, content_type=content_type, orig_bytes=orig_bytes,
         store_name_hint=store_name_hint, crop_corners=crop_corners, db=db,
     )
+    _start_job(receipt_id, _db_factory(request))
+    terminal = await jobs.wait(receipt_id)
+    if terminal is None:
+        raise HTTPException(status_code=503, detail="Processing was interrupted; it will resume shortly")
+    if terminal["type"] == "error":
+        raise HTTPException(status_code=terminal["status"], detail=terminal["detail"])
+    return terminal["data"]
 
 
 @router.post("/upload-stream")
@@ -401,14 +670,19 @@ async def upload_receipt_stream(
     store_name_hint: Optional[str] = Form(None),
     crop_corners: Optional[str] = Form(None),
     original: Optional[UploadFile] = File(None),
+    db: aiosqlite.Connection = Depends(get_db),
 ):
     """
-    Same as /upload, but streams progress as server-sent events so the UI can
+    Same as /upload, but streams progress as server-sent events so a client can
     show real progress. Each event is one `data:` line holding a JSON object:
+        data: {"type": "accepted", "receipt_id": 12}
         data: {"type": "progress", "stage": "reading", "method": "ai", "items": 12}
         ...
         data: {"type": "result", "data": <ProcessingResult>}
     or, on failure, data: {"type": "error", "status": 422, "detail": "..."}.
+
+    Closing the stream does not stop the work: once `accepted` has been sent
+    the receipt is processed to the end regardless.
 
     text/event-stream (rather than NDJSON) matters behind proxies: Home
     Assistant's ingress gzips any application/*json* response, and the
@@ -417,53 +691,81 @@ async def upload_receipt_stream(
     and uncompressed.
     """
     contents, content_type, orig_bytes = await _read_upload(file, original)
-    # The response body outlives the endpoint, so open the DB connection inside
-    # the stream rather than through Depends (honouring test overrides).
-    db_factory = request.app.dependency_overrides.get(get_db, get_db)
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def progress(stage: str, **detail) -> None:
-        queue.put_nowait({"type": "progress", "stage": stage, **detail})
-
-    async def run() -> None:
-        db_gen = db_factory()
-        try:
-            db = await db_gen.__anext__()
-            result = await _process_upload(
-                contents=contents, content_type=content_type, orig_bytes=orig_bytes,
-                store_name_hint=store_name_hint, crop_corners=crop_corners, db=db,
-                progress=progress,
-            )
-            queue.put_nowait({"type": "result", "data": result.model_dump(mode="json")})
-        except HTTPException as e:
-            queue.put_nowait({"type": "error", "status": e.status_code, "detail": e.detail})
-        except Exception:
-            logger.exception("Receipt processing failed")
-            queue.put_nowait({"type": "error", "status": 500, "detail": "Receipt processing failed"})
-        finally:
-            try:
-                await db_gen.aclose()
-            finally:
-                queue.put_nowait(None)
+    receipt_id = await _accept_upload(
+        contents=contents, content_type=content_type, orig_bytes=orig_bytes,
+        store_name_hint=store_name_hint, crop_corners=crop_corners, db=db,
+    )
+    _start_job(receipt_id, _db_factory(request))
+    # Subscribed before the job gets a chance to run, so no event is missed.
+    queue = jobs.subscribe(receipt_id)
 
     async def events():
-        task = asyncio.create_task(run())
-        _stream_tasks.add(task)
-        task.add_done_callback(_stream_tasks.discard)
         try:
+            yield f"data: {json.dumps({'type': 'accepted', 'receipt_id': receipt_id})}\n\n"
             while (event := await queue.get()) is not None:
                 yield f"data: {json.dumps(event)}\n\n"
         finally:
-            # Client went away (or the response was torn down): stop the work.
-            # run()'s own finally closes the DB connection.
-            if not task.done():
-                task.cancel()
+            # Client went away (or the stream ended): stop listening. The job
+            # itself carries on.
+            jobs.unsubscribe(receipt_id, queue)
 
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/status", response_model=list[ReceiptProcessingStatus])
+async def processing_status(
+    ids: str,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Processing state of the given receipts (`ids` = comma-separated, max 100),
+    for polling after /enqueue.
+
+    - status 'processing': `progress` is the live stage, e.g.
+      {"stage": "reading", "method": "ai", "items": 12} ("queued" while waiting
+      for a free worker)
+    - status 'failed': `error` says why
+    - otherwise (processed): `result` is the ProcessingResult when the job
+      finished recently, else null — fetch the receipt instead
+    Receipts that don't exist (any more) are left out.
+    """
+    try:
+        wanted = [int(part) for part in ids.split(",") if part.strip()]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="ids must be comma-separated integers")
+    wanted = list(dict.fromkeys(wanted))[:100]
+    if not wanted:
+        return []
+
+    placeholders = ",".join("?" * len(wanted))
+    async with db.execute(
+        f"SELECT id, status, processing_error FROM receipts WHERE id IN ({placeholders})", wanted
+    ) as cur:
+        rows = {row["id"]: row for row in await cur.fetchall()}
+
+    out = []
+    for receipt_id in wanted:
+        row = rows.get(receipt_id)
+        if row is None:
+            continue
+        status = row["status"] or "pending"
+        progress = error = result = None
+        if status == "processing":
+            progress = jobs.snapshot(receipt_id) or {"stage": "queued"}
+        elif status == "failed":
+            error = row["processing_error"] or "Receipt processing failed"
+        else:
+            terminal = jobs.result(receipt_id)
+            if terminal and terminal["type"] == "result":
+                result = terminal["data"]
+        entry = ReceiptProcessingStatus(
+            id=receipt_id, status=status, progress=progress, error=error, result=result)
+        out.append(entry)
+    return out
 
 
 # ── Duplicate Detection ───────────────────────────────────────────────────────
@@ -567,10 +869,11 @@ async def save_receipt(
     if body.manual_total is not None and body.manual_total < 0:
         raise HTTPException(status_code=422, detail="Manual total cannot be negative.")
 
-    async with db.execute("SELECT id, receipt_date FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+    async with db.execute("SELECT id, receipt_date, status FROM receipts WHERE id = ?", (receipt_id,)) as cur:
         row = await cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Receipt not found")
+    _ensure_processed(row["status"])
 
     # On approve, ensure a date exists (either from body or already in DB)
     if body.approve:
@@ -694,6 +997,44 @@ async def save_receipt(
     return {"status": "ok", "receipt_id": receipt_id}
 
 
+# ── Reprocess (retry after a failed extraction) ───────────────────────────────
+
+@router.post("/{receipt_id}/reprocess", response_model=EnqueuedReceipt, status_code=202)
+async def reprocess_receipt(
+    receipt_id: int,
+    request: Request,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Re-run processing for a receipt whose status is 'failed', from the upload
+    kept on disk. The receipt goes back to 'processing'.
+    """
+    async with db.execute(
+        "SELECT status, processing_job FROM receipts WHERE id = ?", (receipt_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    if row["status"] == "processing":
+        raise HTTPException(status_code=409, detail=_STILL_PROCESSING)
+    if row["status"] != "failed":
+        raise HTTPException(status_code=409, detail="Only a failed receipt can be reprocessed")
+    files = _job_files(row["processing_job"])
+    if not files or not os.path.exists(files[0]):
+        raise HTTPException(status_code=409, detail="The uploaded file is no longer on the server — upload it again")
+
+    job = json.loads(row["processing_job"])
+    job["attempts"] = 0
+    await db.execute(
+        """UPDATE receipts SET status = 'processing', processing_error = NULL, processing_job = ?
+           WHERE id = ?""",
+        (json.dumps(job), receipt_id),
+    )
+    await db.commit()
+    _start_job(receipt_id, _db_factory(request))
+    return EnqueuedReceipt(receipt_id=receipt_id, status="processing")
+
+
 # ── Recategorize (retry after failure) ────────────────────────────────────────
 
 @router.post("/{receipt_id}/recategorize")
@@ -707,10 +1048,11 @@ async def recategorize_receipt(
     Only items currently categorized as 'Other' with category_source='ai' are
     sent to Claude — learned and manual categories are left untouched.
     """
-    async with db.execute("SELECT store_name FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+    async with db.execute("SELECT store_name, status FROM receipts WHERE id = ?", (receipt_id,)) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Receipt not found")
+    _ensure_processed(row["status"])
     store_name = row["store_name"]
 
     # Fetch line items that need recategorization (AI-assigned "Other" with low confidence)
@@ -825,9 +1167,9 @@ async def get_receipt(
 
     return Receipt(
         id=row["id"],
-        store_name=row["store_name"],
+        store_name=row["store_name"] or "",
         receipt_date=row["receipt_date"],
-        scanned_at=row["scanned_at"],
+        scanned_at=row["scanned_at"] or "",
         ocr_raw=row["ocr_raw"],
         image_path=row["image_path"],
         thumbnail_path=row["thumbnail_path"] if "thumbnail_path" in row.keys() else None,
@@ -836,9 +1178,10 @@ async def get_receipt(
         discounts=row["discounts"],
         total=row["total"],
         total_verified=bool(row["total_verified"]),
-        status=row["status"],
+        status=row["status"] or "pending",
         ynab_sync_status=row["ynab_sync_status"] if "ynab_sync_status" in row.keys() else None,
         ynab_transaction_id=row["ynab_transaction_id"] if "ynab_transaction_id" in row.keys() else None,
+        processing_error=row["processing_error"] if "processing_error" in row.keys() else None,
         items=[
             LineItem(
                 id=i["id"], receipt_id=i["receipt_id"],
@@ -859,20 +1202,20 @@ async def delete_receipt(
     db: aiosqlite.Connection = Depends(get_db),
 ):
     async with db.execute(
-        "SELECT image_path, original_path, thumbnail_path FROM receipts WHERE id = ?", (receipt_id,)
+        "SELECT image_path, original_path, thumbnail_path, processing_job FROM receipts WHERE id = ?",
+        (receipt_id,),
     ) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Receipt not found")
 
-    # Remove image files (full + original + thumbnail)
-    for path_key in ("image_path", "original_path", "thumbnail_path"):
-        try:
-            p = row[path_key]
-            if p and os.path.exists(p):
-                os.remove(p)
-        except Exception:
-            pass
+    # Still being processed: stop the job before taking its files away.
+    await jobs.cancel(receipt_id)
+
+    # Remove image files (full + original + thumbnail) and any raw upload
+    # still waiting to be (re)processed.
+    _remove_files(row["image_path"], row["original_path"], row["thumbnail_path"],
+                  *_job_files(row["processing_job"]))
 
     await db.execute("DELETE FROM line_items WHERE receipt_id = ?", (receipt_id,))
     await db.execute("DELETE FROM receipts WHERE id = ?", (receipt_id,))
@@ -1066,11 +1409,12 @@ async def replace_receipt_image(
         raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
 
     async with db.execute(
-        "SELECT image_path, original_path, thumbnail_path FROM receipts WHERE id = ?", (receipt_id,)
+        "SELECT image_path, original_path, thumbnail_path, status FROM receipts WHERE id = ?", (receipt_id,)
     ) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Receipt not found")
+    _ensure_processed(row["status"])
 
     image_path = row["image_path"]
     if not image_path:

@@ -7,7 +7,8 @@ Covers:
   image while the stored copy is width-capped, PDF text is passed as a hint
 - POST /upload-stream: server-sent progress events in order then a result matching
   ProcessingResult, error events for failures inside processing, normal 422s
-  for validation errors, DB connection cleanup and client disconnects
+  for validation errors, DB connection cleanup, and processing that carries
+  on after the client disconnects
 
 extract_receipt_with_ai is always mocked; no network calls are made.
 """
@@ -213,9 +214,13 @@ class TestUploadStream:
         result = ProcessingResult.model_validate(events[-1]["data"])
         assert result.store_name == "ALDI"
         assert [i.category for i in result.items] == ["Produce", "Dairy & Eggs"]
-        async with db.execute("SELECT COUNT(*) AS n FROM receipts") as cur:
-            assert (await cur.fetchone())["n"] == 1
-        assert db_closed == [True]
+        assert events[0] == {"type": "accepted", "receipt_id": result.receipt_id}
+        async with db.execute("SELECT id, status FROM receipts") as cur:
+            rows = [tuple(r) for r in await cur.fetchall()]
+        assert rows == [(result.receipt_id, "pending")]
+        # Two connections were opened — the request's and the background job's —
+        # and both were closed.
+        assert db_closed == [True, True]
 
     @pytest.mark.asyncio
     @patch("routers.receipts.categorize_items", new_callable=AsyncMock)
@@ -274,11 +279,17 @@ class TestUploadStream:
             )
         assert resp.status_code == 200
         events = parse_sse(resp.text)
-        assert events[0] == {"type": "progress", "stage": "preparing"}
+        assert events[0]["type"] == "accepted"
+        assert events[1] == {"type": "progress", "stage": "preparing"}
         assert events[-1]["type"] == "error"
         assert events[-1]["status"] == 422
         assert "Failed to process PDF" in events[-1]["detail"]
-        assert db_closed == [True]
+        assert db_closed == [True, True]
+        # The upload was accepted, so the failure is kept on the receipt.
+        async with db.execute("SELECT status, processing_error FROM receipts") as cur:
+            rows = [tuple(r) for r in await cur.fetchall()]
+        assert len(rows) == 1 and rows[0][0] == "failed"
+        assert "Failed to process PDF" in rows[0][1]
 
     @pytest.mark.asyncio
     @patch("routers.receipts.extract_receipt_with_ai", new_callable=AsyncMock)
@@ -302,7 +313,8 @@ class TestUploadStream:
         assert resp.status_code == 422
         assert resp.headers["content-type"].startswith("application/json")
         assert "Unsupported file type" in resp.json()["detail"]
-        assert db_closed == []          # never opened
+        async with db.execute("SELECT COUNT(*) AS n FROM receipts") as cur:
+            assert (await cur.fetchone())["n"] == 0   # rejected before anything is stored
 
     @pytest.mark.asyncio
     async def test_missing_file_is_a_plain_422(self, db, app):
@@ -312,44 +324,47 @@ class TestUploadStream:
         assert resp.headers["content-type"].startswith("application/json")
 
     @pytest.mark.asyncio
-    async def test_client_disconnect_cancels_processing_and_closes_db(self, db, app, db_closed):
+    async def test_client_disconnect_does_not_stop_processing(self, db, app, db_closed):
+        """Once an upload is accepted, the work no longer belongs to the request."""
         from fastapi import UploadFile
         from starlette.datastructures import Headers
         import routers.receipts as receipts
+        from services.receipt_jobs import jobs
 
         started = asyncio.Event()
-        cancelled = asyncio.Event()
+        release = asyncio.Event()
 
-        async def hanging_extract(*args, **kwargs):
+        async def slow_extract(*args, **kwargs):
             started.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                cancelled.set()
-                raise
+            await release.wait()
+            return ai_parsed()
 
         upload = UploadFile(
             file=io.BytesIO(make_jpeg(300, 600)), filename="r.jpg",
             headers=Headers({"content-type": "image/jpeg"}),
         )
-        with patch.object(receipts, "extract_receipt_with_ai", side_effect=hanging_extract):
+        with patch.object(receipts, "extract_receipt_with_ai", side_effect=slow_extract), \
+             patch("services.categorize_service._call_claude", new_callable=AsyncMock):
             response = await receipts.upload_receipt_stream(
                 request=SimpleNamespace(app=app), file=upload,
-                store_name_hint=None, crop_corners=None, original=None,
+                store_name_hint=None, crop_corners=None, original=None, db=db,
             )
             body = response.body_iterator
-            first = parse_sse(await body.__anext__())[0]
-            assert first == {"type": "progress", "stage": "preparing"}
+            accepted = parse_sse(await body.__anext__())[0]
+            assert accepted["type"] == "accepted"
+            receipt_id = accepted["receipt_id"]
+            assert parse_sse(await body.__anext__())[0] == {"type": "progress", "stage": "preparing"}
             await asyncio.wait_for(started.wait(), timeout=5)
 
-            await body.aclose()         # the client went away
-            await asyncio.wait_for(cancelled.wait(), timeout=5)
-            for _ in range(50):
-                if db_closed and not receipts._stream_tasks:
-                    break
-                await asyncio.sleep(0.01)
+            await body.aclose()         # the client went away mid-extraction
+            assert jobs.is_running(receipt_id)
 
-        assert db_closed == [True]
-        assert not receipts._stream_tasks
-        async with db.execute("SELECT COUNT(*) AS n FROM receipts") as cur:
-            assert (await cur.fetchone())["n"] == 0
+            release.set()
+            terminal = await asyncio.wait_for(jobs.wait(receipt_id), timeout=5)
+
+        assert terminal["type"] == "result"
+        async with db.execute("SELECT status FROM receipts WHERE id = ?", (receipt_id,)) as cur:
+            assert (await cur.fetchone())["status"] == "pending"
+        async with db.execute("SELECT COUNT(*) AS n FROM line_items WHERE receipt_id = ?", (receipt_id,)) as cur:
+            assert (await cur.fetchone())["n"] == 2
+        assert db_closed == [True]      # the job's connection

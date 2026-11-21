@@ -48,6 +48,17 @@ async def init_db():
                 "ALTER TABLE receipts ADD COLUMN ynab_synced_at TEXT"
             )
             logger.info("Migration: added receipts.ynab_synced_at")
+        # Background processing (uploads are accepted first, processed after)
+        if "processing_job" not in cols:
+            await db.execute(
+                "ALTER TABLE receipts ADD COLUMN processing_job TEXT"
+            )
+            logger.info("Migration: added receipts.processing_job")
+        if "processing_error" not in cols:
+            await db.execute(
+                "ALTER TABLE receipts ADD COLUMN processing_error TEXT"
+            )
+            logger.info("Migration: added receipts.processing_error")
         # categories.is_disabled (added after initial schema)
         async with db.execute("PRAGMA table_info(categories)") as cur:
             cat_cols = {row[1] async for row in cur}
@@ -120,7 +131,9 @@ CREATE TABLE IF NOT EXISTS receipts (
     discounts       REAL DEFAULT 0,
     total           REAL,
     total_verified  INTEGER DEFAULT 0,     -- 1 if math checks out
-    status          TEXT DEFAULT 'pending' -- pending | review | verified
+    status          TEXT DEFAULT 'pending',-- processing | failed | pending | review | verified
+    processing_job  TEXT,                  -- JSON: raw upload awaiting (re)processing; null once processed
+    processing_error TEXT                  -- why processing failed (status 'failed')
 );
 
 -- Individual line items on a receipt
